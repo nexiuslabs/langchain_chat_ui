@@ -27,22 +27,31 @@ async function buildProviders() {
         },
       });
     } catch (e) {
-      console.warn("Nexius OIDC discovery failed; falling back to dev credentials login.", e);
+      console.warn(
+        "Nexius OIDC discovery failed; falling back to dev credentials login.",
+        e
+      );
     }
   }
   if (providers.length === 0) {
     // Dev-only fallback to unblock local development when SSO env is not set
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "Nexius SSO (OIDC) is not configured in production. Set NEXIUS_ISSUER, NEXIUS_CLIENT_ID, NEXIUS_CLIENT_SECRET."
+      );
+    }
     providers.push(
       Credentials({
-        name: "Dev Login",
+        name: "Login",
         credentials: {
           email: { label: "Email", type: "email" },
-          tenant: { label: "Tenant ID", type: "text" },
+          password: { label: "Password", type: "password" },
         },
         async authorize(creds) {
           const email = (creds as any)?.email;
-          const tenant = (creds as any)?.tenant || "dev";
-          if (!email) return null;
+          const password = (creds as any)?.password;
+          if (!email || !password) return null;
+          const tenant = process.env.DEFAULT_TENANT_ID || "dev";
           return { id: email, email, tenant_id: tenant } as any;
         },
       })
@@ -61,8 +70,13 @@ const handler = NextAuth({
       // Map from OIDC profile or Credentials user
       const anyProf: any = profile as any;
       if (anyProf) {
-        (token as any).tenant_id = anyProf.tenant_id ?? anyProf["https://claims/tenant_id"] ?? (token as any).tenant_id ?? null;
-        (token as any).roles = anyProf.roles ?? anyProf["https://claims/roles"] ?? (token as any).roles ?? [];
+        (token as any).tenant_id =
+          anyProf.tenant_id ??
+          anyProf["https://claims/tenant_id"] ??
+          (token as any).tenant_id ??
+          null;
+        (token as any).roles =
+          anyProf.roles ?? anyProf["https://claims/roles"] ?? (token as any).roles ?? [];
       }
       return token;
     },
@@ -70,6 +84,11 @@ const handler = NextAuth({
       (session as any).idToken = (token as any).id_token;
       (session as any).tenantId = (token as any).tenant_id ?? null;
       (session as any).roles = (token as any).roles ?? [];
+      // Expose issuer and NEXTAUTH_URL for client-side global logout flow
+      (session as any).issuer = process.env.NEXIUS_ISSUER || null;
+      (session as any).nextauthUrl = process.env.NEXTAUTH_URL || null;
+      // Expose public client id to assist front-channel logout
+      (session as any).clientId = process.env.NEXIUS_CLIENT_ID || null;
       return session;
     },
   },
