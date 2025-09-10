@@ -24,6 +24,7 @@ import { PasswordInput } from "@/components/ui/password-input";
 import { getApiKey } from "@/lib/api-key";
 import { useThreads } from "./Thread";
 import { toast } from "sonner";
+import { useSession } from "next-auth/react";
 
 export type StateType = { messages: Message[]; ui?: UIMessage[] };
 
@@ -77,6 +78,21 @@ const StreamSession = ({
   apiUrl: string;
   assistantId: string;
 }) => {
+  const { data: session, status } = useSession();
+  const idToken = (session as any)?.idToken as string | undefined;
+  const sessionTenantId = (session as any)?.tenantId as string | undefined;
+  const [tenantOverride, setTenantOverride] = useState<string | null>(null);
+  // Read dev override from localStorage if feature is enabled
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const enabled = (process.env.NEXT_PUBLIC_ENABLE_TENANT_SWITCHER || '').toLowerCase() === 'true';
+    if (!enabled) return;
+    try {
+      const v = window.localStorage.getItem('lg:chat:tenantId');
+      if (v) setTenantOverride(v);
+    } catch {}
+  }, []);
+  const effectiveTenantId = tenantOverride || sessionTenantId;
   const [threadId, setThreadId] = useQueryState("threadId");
   const { getThreads, setThreads } = useThreads();
   const streamValue = useTypedStream({
@@ -84,6 +100,12 @@ const StreamSession = ({
     apiKey: apiKey ?? undefined,
     assistantId,
     threadId: threadId ?? null,
+    fetchOptions: {
+      headers: {
+        ...(effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : {}),
+        ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+      },
+    },
     onCustomEvent: (event, options) => {
       if (isUIMessage(event) || isRemoveUIMessage(event)) {
         options.mutate((prev) => {

@@ -10,7 +10,6 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
-*.local
 
 # Editor directories and files
 .vscode/*
@@ -26,5 +25,8 @@ dist-ssr
 # LangGraph API
 .langgraph_api
 .env
+.env.local
+!.env
+!.env.local
 .next/
 next-env.d.ts
