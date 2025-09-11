@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
-import { useSession } from "next-auth/react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+// Note: do not rely on NextAuth session for cookie-based onboarding
 import { useAuthFetch } from "@/lib/useAuthFetch";
 
 type Status = "unknown" | "provisioning" | "syncing" | "ready" | "error";
@@ -14,28 +14,42 @@ export function FirstLoginGate({ children }: { children: React.ReactNode }) {
       "http://localhost:2024",
     []
   );
-  const { status } = useSession();
   const authFetch = useAuthFetch();
   const [state, setState] = useState<{ status: Status; error?: string }>({ status: "unknown" });
+  const [enabled, setEnabled] = useState(false);
+  const bootRef = useRef(false);
 
   useEffect(() => {
-    if (status !== "authenticated") return;
     let cancelled = false;
+    if (bootRef.current) return;
 
     async function kickOff() {
       try {
         const res = await authFetch(`${apiBase}/onboarding/first_login`, { method: "POST" });
+        if (res.status === 401) {
+          if (!cancelled) setEnabled(false);
+          return;
+        }
         const body = await res.json().catch(() => ({}));
-        if (!cancelled) setState({ status: (body.status as Status) || "provisioning" });
+        if (!cancelled) {
+          setEnabled(true);
+          setState({ status: (body.status as Status) || "provisioning" });
+        }
       } catch (e: any) {
         if (!cancelled) setState({ status: "error", error: String(e) });
       }
     }
     kickOff();
+    bootRef.current = true;
 
     const iv = setInterval(async () => {
+      if (!enabled) return;
       try {
         const res = await authFetch(`${apiBase}/onboarding/status`);
+        if (res.status === 401) {
+          if (!cancelled) setEnabled(false);
+          return;
+        }
         const body = await res.json();
         if (!cancelled) setState({ status: (body.status as Status) || "provisioning", error: body.error });
         if (body.status === "ready") clearInterval(iv);
@@ -48,9 +62,7 @@ export function FirstLoginGate({ children }: { children: React.ReactNode }) {
       cancelled = true;
       clearInterval(iv);
     };
-  }, [status, apiBase, authFetch]);
-
-  if (status !== "authenticated") return <div />;
+  }, [apiBase, authFetch, enabled]);
   if (state.status === "ready") return <>{children}</>;
 
   return (

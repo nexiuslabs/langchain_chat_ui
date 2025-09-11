@@ -21,8 +21,10 @@ async function forward(method: string, request: Request, ctx: Ctx) {
   // Forward selected headers from client
   const auth = request.headers.get("authorization");
   const tenant = request.headers.get("x-tenant-id");
+  const cookie = request.headers.get("cookie");
   if (auth) headers.set("authorization", auth);
   if (tenant) headers.set("x-tenant-id", tenant);
+  if (cookie) headers.set("cookie", cookie);
   // Content negotiation
   const ct = request.headers.get("content-type");
   if (ct) headers.set("content-type", ct);
@@ -32,8 +34,9 @@ async function forward(method: string, request: Request, ctx: Ctx) {
 
   const init: RequestInit = { method, headers };
   if (method !== "GET" && method !== "HEAD") {
-    init.body = request.body;
-    // Edge runtime requires duplex for streaming
+    // Read fully to avoid body locking issues on edge runtime
+    const bodyText = await request.text();
+    init.body = bodyText;
     (init as any).duplex = "half";
   }
   const resp = await fetch(url, init);

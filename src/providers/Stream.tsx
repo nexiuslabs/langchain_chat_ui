@@ -101,9 +101,10 @@ const StreamSession = ({
     assistantId,
     threadId: threadId ?? null,
     fetchOptions: {
+      credentials: "include",
       headers: {
         ...(effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : {}),
-        ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+        ...(process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_USE_AUTH_HEADER === 'true' && idToken ? { Authorization: `Bearer ${idToken}` } : {}),
       },
     },
     onCustomEvent: (event, options) => {

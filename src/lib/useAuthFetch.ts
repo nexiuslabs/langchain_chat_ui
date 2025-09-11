@@ -21,14 +21,32 @@ export function useAuthFetch() {
   return async function authFetch(input: RequestInfo | URL, init: RequestInit = {}) {
     const headers = new Headers(init.headers || {});
     const tid = tenantOverride();
-    if (idToken) headers.set("Authorization", `Bearer ${idToken}`);
+    // Only allow Authorization header in development when explicitly enabled
+    const allowAuthHeader = process.env.NODE_ENV !== "production" && (process.env.NEXT_PUBLIC_USE_AUTH_HEADER || "").toLowerCase() === "true";
+    if (allowAuthHeader && idToken) headers.set("Authorization", `Bearer ${idToken}`);
     if (tid) headers.set("X-Tenant-ID", tid);
-    const res = await fetch(input, { ...init, headers });
+    // Proxy to /api to keep same-origin cookies when enabled
+    let target: RequestInfo | URL = input;
+    try {
+      const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
+      const base = process.env.NEXT_PUBLIC_API_URL || "";
+      const url = typeof input === 'string' ? input : (input as URL).toString();
+      if (useProxy && base && url.startsWith(base)) {
+        const u = new URL(url);
+        target = "/api/backend" + u.pathname + (u.search || "");
+      }
+    } catch {}
+
+    const res = await fetch(target, { ...init, headers, credentials: "include" });
     if (res.status === 401) {
-      // Token invalid/expired → retry via SSO
-      void signIn(undefined, { callbackUrl: "/" });
+      // In production cookie-mode, send user to cookie login page
+      if (process.env.NODE_ENV === 'production' || (process.env.NEXT_PUBLIC_USE_AUTH_HEADER || '').toLowerCase() !== 'true') {
+        if (typeof window !== 'undefined') window.location.href = "/login";
+      } else {
+        // Dev: optionally allow SSO re-auth via NextAuth if enabled
+        void signIn(undefined, { callbackUrl: "/" });
+      }
     }
     return res;
   };
 }
-

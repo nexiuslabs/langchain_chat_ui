@@ -5,34 +5,37 @@ import { StreamProvider } from "@/providers/Stream";
 import { ThreadProvider } from "@/providers/Thread";
 import { ArtifactProvider } from "@/components/thread/artifact";
 import { Toaster } from "@/components/ui/sonner";
-import React from "react";
-import { useSession, signIn } from "next-auth/react";
+import React, { useEffect, useRef } from "react";
 import HeaderBar from "@/components/ui/header-bar";
 import { FirstLoginGate } from "@/components/onboarding/FirstLoginGate";
+import { useSession } from "next-auth/react";
 
 export default function DemoPage(): React.ReactNode {
-  const { status } = useSession();
-  if (status === "loading") return <div />;
-  if (status === "unauthenticated") {
-    return (
-      <div className="min-h-screen w-full flex items-center justify-center p-4">
-        <div className="border rounded-md shadow-sm p-6 max-w-md w-full space-y-4 text-center">
-          <div className="text-xl font-semibold">Welcome</div>
-          <div className="text-sm text-muted-foreground">
-            Sign in with Nexius SSO to continue.
-          </div>
-          <div className="pt-2">
-            <button
-              className="px-4 py-2 text-sm border rounded"
-              onClick={() => signIn("nexius", { callbackUrl: "/" })}
-            >
-              Sign in
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const { data: session, status } = useSession();
+  const exchangedRef = useRef(false);
+
+  // If SSO (NextAuth) is being used, exchange the ID token for server cookies
+  useEffect(() => {
+    async function run() {
+      try {
+        if (exchangedRef.current) return;
+        const idToken = (session as any)?.idToken as string | undefined;
+        if (status === "authenticated" && idToken) {
+          const base = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === 'true'
+            ? "/api/backend"
+            : (process.env.NEXT_PUBLIC_API_URL || "");
+          const res = await fetch(`${base}/auth/exchange`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ id_token: idToken }),
+          });
+          if (res.ok) exchangedRef.current = true;
+        }
+      } catch {}
+    }
+    run();
+  }, [session, status]);
   return (
     <React.Suspense fallback={<div>Loading (layout)...</div>}>
       <HeaderBar />
