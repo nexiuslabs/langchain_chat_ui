@@ -8,6 +8,8 @@ export default function HeaderBar() {
   const { data: session } = useSession();
   const email = (session as any)?.user?.email as string | undefined;
   const tenantId = (session as any)?.tenantId as string | undefined;
+  const [emailOverride, setEmailOverride] = useState<string | null>(null);
+  const [tenantIdOverride, setTenantIdOverride] = useState<string | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [override, setOverride] = useState("");
   const [hasOverride, setHasOverride] = useState(false);
@@ -39,6 +41,35 @@ export default function HeaderBar() {
       } catch {}
     }
   }, []);
+
+  // Fallback identity when NextAuth session is not set (cookie login path)
+  useEffect(() => {
+    let cancelled = false;
+    if (email) {
+      setEmailOverride(null);
+      return;
+    }
+    (async () => {
+      try {
+        // Try strict whoami first
+        let res = await authFetch(`${apiBase}/whoami`);
+        if (!res.ok) {
+          // Fallback to optional identity to get email when tenant_id claim is missing
+          res = await authFetch(`${apiBase}/session/odoo_info`);
+        }
+        if (!res.ok) return;
+        const j = await res.json();
+        if (cancelled) return;
+        const em = j?.email || j?.user?.email;
+        const tid = j?.tenant_id ?? (j?.odoo?.tenant_id ?? null);
+        if (em) setEmailOverride(String(em));
+        if (tid != null) setTenantIdOverride(String(tid));
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [email, apiBase, authFetch]);
 
   const applyOverride = () => {
     try {
@@ -94,18 +125,18 @@ export default function HeaderBar() {
         return;
       }
     } catch {}
-    // Fallback: go to local sign-in page
-    window.location.href = "/api/auth/signin";
+    // Fallback: go to our custom login page
+    window.location.href = "/login";
   };
 
   return (
     <div className="w-full border-b bg-background/60 backdrop-blur supports-[backdrop-filter]:bg-background/40">
       <div className="mx-auto max-w-6xl px-4 py-2 flex items-center gap-3 justify-between">
         <div className="text-sm text-muted-foreground truncate">
-          {email ? (
+          {(email || emailOverride) ? (
             <span>
-              Signed in as <span className="font-medium text-foreground">{email}</span>
-              {" "+(tenantId ? `(tenant: ${tenantId}${hasOverride ? ", override" : ""})` : "")}
+              Signed in as <span className="font-medium text-foreground">{email || emailOverride}</span>
+              {" "+((tenantId || tenantIdOverride) ? `(tenant: ${tenantId || tenantIdOverride}${hasOverride ? ", override" : ""})` : "")}
             </span>
           ) : (
             <span>Authenticating…</span>

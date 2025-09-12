@@ -64,24 +64,37 @@ const handler = NextAuth({
   providers: await buildProviders(),
   session: { strategy: "jwt" },
   trustHost: true,
+  // Route all sign-in/out flows through our custom login page
+  pages: {
+    signIn: "/login",
+    signOut: "/login",
+    error: "/login",
+  },
   callbacks: {
-    async jwt({ token, account, profile }) {
+    async jwt({ token, account, profile, user }) {
+      // Preserve ID token when provided by OIDC provider
       if (account?.id_token) (token as any).id_token = account.id_token;
-      // Map from OIDC profile or Credentials user
-      const anyProf: any = profile as any;
-      if (anyProf) {
-        (token as any).tenant_id =
-          anyProf.tenant_id ??
-          anyProf["https://claims/tenant_id"] ??
-          (token as any).tenant_id ??
-          null;
-        (token as any).roles =
-          anyProf.roles ?? anyProf["https://claims/roles"] ?? (token as any).roles ?? [];
-      }
+
+      // Derive email consistently from user/profile on initial sign-in
+      const anyProf: any = (profile as any) || (user as any) || {};
+      const email = (user as any)?.email || anyProf?.email || (token as any).email;
+      if (email) (token as any).email = email;
+
+      // Map tenant/roles from OIDC claims or credentials user
+      (token as any).tenant_id =
+        anyProf?.tenant_id ??
+        anyProf?.["https://claims/tenant_id"] ??
+        (token as any).tenant_id ??
+        null;
+      (token as any).roles =
+        anyProf?.roles ?? anyProf?.["https://claims/roles"] ?? (token as any).roles ?? [];
       return token;
     },
     async session({ session, token }) {
       (session as any).idToken = (token as any).id_token;
+      // Ensure user object exists and propagate email for header bar
+      (session as any).user = (session as any).user || {};
+      if ((token as any).email) (session as any).user.email = (token as any).email;
       (session as any).tenantId = (token as any).tenant_id ?? null;
       (session as any).roles = (token as any).roles ?? [];
       // Expose issuer and NEXTAUTH_URL for client-side global logout flow

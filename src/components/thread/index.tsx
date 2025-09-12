@@ -3,7 +3,8 @@ import { ReactNode, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useStreamContext } from "@/providers/Stream";
-import { useState, FormEvent } from "react";
+import { useState, FormEvent, useMemo } from "react";
+import { useSession } from "next-auth/react";
 import { Button } from "../ui/button";
 import { Checkpoint, Message } from "@langchain/langgraph-sdk";
 import { AssistantMessage, AssistantMessageLoading } from "./messages/ai";
@@ -113,6 +114,18 @@ function OpenGitHubRepo() {
 }
 
 export function Thread() {
+  const { data: session } = useSession();
+  const sessionTenantId = (session as any)?.tenantId as string | undefined;
+  const tenantId = useMemo(() => {
+    try {
+      const enabled = (process.env.NEXT_PUBLIC_ENABLE_TENANT_SWITCHER || "").toLowerCase() === "true";
+      if (enabled && typeof window !== "undefined") {
+        const v = window.localStorage.getItem("lg:chat:tenantId");
+        if (v) return v;
+      }
+    } catch {}
+    return sessionTenantId;
+  }, [sessionTenantId]);
   const [artifactContext, setArtifactContext] = useArtifactContext();
   const [artifactOpen, closeArtifact] = useArtifactOpen();
 
@@ -212,8 +225,8 @@ export function Thread() {
 
     const toolMessages = ensureToolCallsHaveResponses(stream.messages);
 
-    const context =
-      Object.keys(artifactContext).length > 0 ? artifactContext : undefined;
+    const baseCtx = Object.keys(artifactContext).length > 0 ? artifactContext : undefined;
+    const context = { ...(baseCtx || {}), ...(tenantId ? { tenant_id: tenantId } : {}) } as any;
 
     stream.submit(
       { messages: [...toolMessages, newHumanMessage], context },
