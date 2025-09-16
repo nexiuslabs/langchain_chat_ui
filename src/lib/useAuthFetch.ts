@@ -7,6 +7,8 @@ export function useAuthFetch() {
   const idToken = (session as any)?.idToken as string | undefined;
   const sessionTenantId = (session as any)?.tenantId as string | undefined;
   const enabled = (process.env.NEXT_PUBLIC_ENABLE_TENANT_SWITCHER || "").toLowerCase() === "true";
+  // Prevent infinite refresh loops on persistent 401s
+  let didRefresh = false;
 
   function tenantOverride(): string | undefined {
     if (!enabled) return sessionTenantId;
@@ -37,15 +39,29 @@ export function useAuthFetch() {
       }
     } catch {}
 
-    const res = await fetch(target, { ...init, headers, credentials: "include" });
-    if (res.status === 401) {
-      // In production cookie-mode, send user to cookie login page
-      if (process.env.NODE_ENV === 'production' || (process.env.NEXT_PUBLIC_USE_AUTH_HEADER || '').toLowerCase() !== 'true') {
-        if (typeof window !== 'undefined') window.location.href = "/login";
-      } else {
-        // Dev: optionally allow SSO re-auth via NextAuth if enabled
-        void signIn(undefined, { callbackUrl: "/" });
-      }
+    const doFetch = async () => fetch(target, { ...init, headers, credentials: "include" });
+    let res = await doFetch();
+    if (res.status !== 401) return res;
+    // Attempt silent cookie refresh once, then retry the original request
+    const useAuthHeader = (process.env.NEXT_PUBLIC_USE_AUTH_HEADER || '').toLowerCase() === 'true';
+    if (!didRefresh && !useAuthHeader) {
+      try {
+        const base = process.env.NEXT_PUBLIC_API_URL || "";
+        const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
+        const refreshUrl = useProxy && base ? "/api/backend/auth/refresh" : `${base.replace(/\/$/, '')}/auth/refresh`;
+        const r = await fetch(refreshUrl, { method: 'POST', credentials: 'include' });
+        didRefresh = true;
+        if (r.ok) {
+          res = await doFetch();
+          if (res.status !== 401) return res;
+        }
+      } catch {}
+    }
+    // Fall back to interactive flows
+    if (process.env.NODE_ENV === 'production' || !useAuthHeader) {
+      if (typeof window !== 'undefined') window.location.href = "/login";
+    } else {
+      void signIn(undefined, { callbackUrl: "/" });
     }
     return res;
   };
