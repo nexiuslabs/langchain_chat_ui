@@ -4,7 +4,14 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 // Note: do not rely on NextAuth session for cookie-based onboarding
 import { useAuthFetch } from "@/lib/useAuthFetch";
 
-type Status = "unknown" | "provisioning" | "syncing" | "ready" | "error";
+type Status =
+  | "unknown"
+  | "starting"
+  | "creating_odoo"
+  | "configuring_oidc"
+  | "seeding"
+  | "ready"
+  | "error";
 
 export function FirstLoginGate({ children }: { children: React.ReactNode }) {
   const apiBase = useMemo(
@@ -34,8 +41,14 @@ export function FirstLoginGate({ children }: { children: React.ReactNode }) {
         const body = await res.json().catch(() => ({}));
         if (!cancelled) {
           setEnabled(true);
-          const initial = (body.status as Status) || "provisioning";
-          setState({ status: initial });
+          const raw = String(body.status || "starting");
+          const initial: Status =
+            raw === "complete"
+              ? "ready"
+              : ([("starting"), ("creating_odoo"), ("configuring_oidc"), ("seeding"), ("ready"), ("error")] as string[]).includes(raw)
+              ? (raw as Status)
+              : "starting";
+          setState({ status: initial, error: body?.error });
           // Fast-pass: if Odoo is already ready, unlock immediately
           try {
             const r2 = await authFetch(`${apiBase}/session/odoo_info`);
@@ -86,10 +99,13 @@ export function FirstLoginGate({ children }: { children: React.ReactNode }) {
         }
         const body = await res.json();
         if (!cancelled) {
-          const raw = (body?.status as string) || "provisioning";
-          const norm = raw === "complete" ? "ready" : raw;
-          const allowed: Status[] = ["provisioning", "syncing", "ready", "error"];
-          const st = (allowed as string[]).includes(norm) ? (norm as Status) : "provisioning";
+          const raw = String(body?.status || "starting");
+          const st: Status =
+            raw === "complete"
+              ? "ready"
+              : ([("starting"), ("creating_odoo"), ("configuring_oidc"), ("seeding"), ("ready"), ("error")] as string[]).includes(raw)
+              ? (raw as Status)
+              : "starting";
           if (st !== "ready") {
             try {
               const v = await authFetch(`${apiBase}/onboarding/verify_odoo`);
@@ -150,15 +166,28 @@ export function FirstLoginGate({ children }: { children: React.ReactNode }) {
   }, [apiBase, authFetch]);
   if (state.status === "ready") return <>{children}</>;
 
+  const copy = (() => {
+    switch (state.status) {
+      case "starting":
+        return "Preparing your workspace…";
+      case "creating_odoo":
+        return "Creating Odoo DB and base modules…";
+      case "configuring_oidc":
+        return "Configuring SSO for your Odoo…";
+      case "seeding":
+        return "Seeding baseline entities and running checks…";
+      case "error":
+        return state.error || "Unknown error";
+      default:
+        return "Setting up your workspace…";
+    }
+  })();
+
   return (
     <div className="w-full h-[60vh] flex items-center justify-center">
       <div className="text-center space-y-2">
         <div className="text-lg font-medium">Setting up your workspace…</div>
-        <div className="text-sm text-muted-foreground">
-          {state.status === "provisioning" && "Provisioning tenant and Odoo mapping"}
-          {state.status === "syncing" && "Running connectivity checks and seeding entities"}
-          {state.status === "error" && (state.error || "Unknown error")}
-        </div>
+        <div className="text-sm text-muted-foreground">{copy}</div>
       </div>
     </div>
   );
