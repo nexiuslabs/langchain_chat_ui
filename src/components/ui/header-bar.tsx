@@ -23,7 +23,6 @@ export default function HeaderBar() {
   );
   const [verifying, setVerifying] = useState(false);
   const [verifyNote, setVerifyNote] = useState<string | null>(null);
-  const [backlog, setBacklog] = useState<number | null>(null);
   const idToken = (session as any)?.idToken as string | undefined;
   const issuerFromSession = (session as any)?.issuer as string | undefined;
   const nextauthUrlFromSession = (session as any)?.nextauthUrl as string | undefined;
@@ -72,26 +71,7 @@ export default function HeaderBar() {
     };
   }, [email, apiBase, authFetch]);
 
-  // Poll shortlist status and read backlog_pending for current tenant
-  useEffect(() => {
-    let cancelled = false;
-    let t: any;
-    const poll = async () => {
-      try {
-        const res = await authFetch(`${apiBase}/shortlist/status`);
-        if (!res.ok) throw new Error(String(res.status));
-        const j = await res.json();
-        const n = (typeof j?.backlog_pending === 'number') ? j.backlog_pending : (typeof j?.pending === 'number' ? j.pending : 0);
-        if (!cancelled) setBacklog(n);
-      } catch {
-        if (!cancelled) setBacklog(null);
-      }
-    };
-    // initial fetch + interval
-    poll();
-    t = setInterval(poll, 30000);
-    return () => { cancelled = true; if (t) clearInterval(t); };
-  }, [apiBase, authFetch]);
+  // No backlog badge polling
 
   const applyOverride = () => {
     try {
@@ -165,12 +145,6 @@ export default function HeaderBar() {
           )}
         </div>
         <div className="flex items-center gap-3">
-          {typeof backlog === 'number' && (
-            <span className={"text-xs px-2 py-1 rounded-full border " + (backlog > 0 ? "bg-yellow-50 text-yellow-700 border-yellow-200" : "text-muted-foreground")}
-                  title="Companies queued for nightly enrichment">
-              Backlog: {backlog} pending
-            </span>
-          )}
           <button
             className="text-sm px-2 py-1 border rounded"
             onClick={verifyOdoo}
