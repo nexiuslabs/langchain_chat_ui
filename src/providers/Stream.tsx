@@ -50,14 +50,33 @@ async function sleep(ms = 4000) {
 async function checkGraphStatus(
   apiUrl: string,
   apiKey: string | null,
+  {
+    idToken,
+    tenantId,
+  }: { idToken?: string; tenantId?: string | null } = {},
 ): Promise<boolean> {
   try {
+    const headers: Record<string, string> = {};
+
+    if (apiKey) {
+      headers["X-Api-Key"] = apiKey;
+    }
+
+    if (tenantId) {
+      headers["X-Tenant-ID"] = tenantId;
+    }
+
+    if (
+      process.env.NODE_ENV !== "production" &&
+      process.env.NEXT_PUBLIC_USE_AUTH_HEADER === "true" &&
+      idToken
+    ) {
+      headers.Authorization = `Bearer ${idToken}`;
+    }
+
     const res = await fetch(`${apiUrl}/info`, {
-      ...(apiKey && {
-        headers: {
-          "X-Api-Key": apiKey,
-        },
-      }),
+      credentials: "include",
+      headers,
     });
 
     return res.ok;
@@ -124,7 +143,10 @@ const StreamSession = ({
   });
 
   useEffect(() => {
-    checkGraphStatus(apiUrl, apiKey).then((ok) => {
+    checkGraphStatus(apiUrl, apiKey, {
+      idToken,
+      tenantId: effectiveTenantId,
+    }).then((ok) => {
       if (!ok) {
         toast.error("Failed to connect to LangGraph server", {
           description: () => (
@@ -139,7 +161,7 @@ const StreamSession = ({
         });
       }
     });
-  }, [apiKey, apiUrl]);
+  }, [apiKey, apiUrl, effectiveTenantId, idToken]);
 
   return (
     <StreamContext.Provider value={streamValue}>
