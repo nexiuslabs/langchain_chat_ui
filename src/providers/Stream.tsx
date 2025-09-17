@@ -4,6 +4,7 @@ import React, {
   ReactNode,
   useState,
   useEffect,
+  useRef,
 } from "react";
 import { useStream } from "@langchain/langgraph-sdk/react";
 import { type Message } from "@langchain/langgraph-sdk";
@@ -74,12 +75,18 @@ async function checkGraphStatus(
       headers.Authorization = `Bearer ${idToken}`;
     }
 
-    const res = await fetch(`${apiUrl}/info`, {
-      credentials: "include",
-      headers,
-    });
+    const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
+    const infoUrl = useProxy ? "/api/info" : `${apiUrl}/info`;
+    const altUrl = useProxy ? "/api/assistants?limit=1" : `${apiUrl}/assistants?limit=1`;
 
-    return res.ok;
+    const res = await fetch(infoUrl, { credentials: "include", headers });
+    if (res.ok) return true;
+    // Fallback to a LangGraph endpoint that is typically open in local dev
+    try {
+      const r2 = await fetch(altUrl, { credentials: "include", headers });
+      if (r2.ok) return true;
+    } catch {}
+    return false;
   } catch (e) {
     console.error(e);
     return false;
@@ -101,6 +108,8 @@ const StreamSession = ({
   const idToken = (session as any)?.idToken as string | undefined;
   const sessionTenantId = (session as any)?.tenantId as string | undefined;
   const [tenantOverride, setTenantOverride] = useState<string | null>(null);
+  const checkingRef = useRef(false);
+  const toastShownRef = useRef(false);
   // Read dev override from localStorage if feature is enabled
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -143,24 +152,45 @@ const StreamSession = ({
   });
 
   useEffect(() => {
+    // Avoid duplicate toasts/checks in React Strict Mode by persisting per-URL flag
+    if (typeof window !== 'undefined') {
+      try {
+        const key = `lg:chat:connToast:${apiUrl}`;
+        toastShownRef.current = window.sessionStorage.getItem(key) === '1';
+      } catch {}
+    }
+
+    if (checkingRef.current) return;
+    checkingRef.current = true;
     checkGraphStatus(apiUrl, apiKey, {
       idToken,
       tenantId: effectiveTenantId,
-    }).then((ok) => {
-      if (!ok) {
-        toast.error("Failed to connect to LangGraph server", {
-          description: () => (
-            <p>
-              Please ensure your graph is running at <code>{apiUrl}</code> and
-              your API key is correctly set (if connecting to a deployed graph).
-            </p>
-          ),
-          duration: 10000,
-          richColors: true,
-          closeButton: true,
-        });
-      }
-    });
+    })
+      .then((ok) => {
+        if (!ok && !toastShownRef.current) {
+          toast.error("Failed to connect to LangGraph server", {
+            description: () => (
+              <p>
+                Please ensure your graph is running at <code>{apiUrl}</code> and
+                your API key is correctly set (if connecting to a deployed graph).
+              </p>
+            ),
+            duration: 10000,
+            richColors: true,
+            closeButton: true,
+          });
+          toastShownRef.current = true;
+          if (typeof window !== 'undefined') {
+            try {
+              const key = `lg:chat:connToast:${apiUrl}`;
+              window.sessionStorage.setItem(key, '1');
+            } catch {}
+          }
+        }
+      })
+      .finally(() => {
+        checkingRef.current = false;
+      });
   }, [apiKey, apiUrl, effectiveTenantId, idToken]);
 
   return (
