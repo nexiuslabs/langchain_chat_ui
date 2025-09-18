@@ -120,8 +120,7 @@ export function Thread() {
   const sessionTenantId = (session as any)?.tenantId as string | undefined;
   const tenantId = useMemo(() => {
     try {
-      const enabled = (process.env.NEXT_PUBLIC_ENABLE_TENANT_SWITCHER || "").toLowerCase() === "true";
-      if (enabled && typeof window !== "undefined") {
+      if (typeof window !== "undefined") {
         const v = window.localStorage.getItem("lg:chat:tenantId");
         if (v) return v;
       }
@@ -254,7 +253,11 @@ export function Thread() {
     const context = { ...(baseCtx || {}), ...(tenantId ? { tenant_id: tenantId } : {}) } as any;
 
     // Ensure a tenant-scoped thread exists before first submit
-    await ensureTenantThread();
+    const ensuredId = await ensureTenantThread();
+    if (ensuredId) {
+      // Give useStream a moment to observe the new threadId to avoid auto-creating another one
+      await new Promise((r) => setTimeout(r, 25));
+    }
     // Send only the new human message to the server; keep tool responses client-side for UI stability
     stream.submit(
       { messages: newHumanMessage, context },

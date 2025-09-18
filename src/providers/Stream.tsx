@@ -27,6 +27,7 @@ import { useThreads } from "./Thread";
 import { toast } from "sonner";
 import { useSession } from "next-auth/react";
 import { mergeThreadLists } from "@/lib/threadTenants";
+import { createClient } from "./client";
 
 export type StateType = { messages: Message[]; ui?: UIMessage[] };
 
@@ -114,11 +115,9 @@ const StreamSession = ({
   const [tenantOverride, setTenantOverride] = useState<string | null>(null);
   const checkingRef = useRef(false);
   const toastShownRef = useRef(false);
-  // Read dev override from localStorage if feature is enabled
+  // Read tenant override from localStorage when present (supports cookie-login scenario)
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const enabled = (process.env.NEXT_PUBLIC_ENABLE_TENANT_SWITCHER || '').toLowerCase() === 'true';
-    if (!enabled) return;
     try {
       const v = window.localStorage.getItem('lg:chat:tenantId');
       if (v) setTenantOverride(v);
@@ -127,6 +126,29 @@ const StreamSession = ({
   const effectiveTenantId = tenantOverride || sessionTenantId;
   const [threadId, setThreadId] = useQueryState("threadId");
   const { getThreads, setThreads } = useThreads();
+
+  // Pre-create a tenant-scoped thread to ensure metadata is attached
+  const precreatedRef = useRef(false);
+  useEffect(() => {
+    if (precreatedRef.current) return;
+    if (threadId) return; // already have a thread
+    if (!assistantId) return;
+    // Require tenant id to avoid cross-tenant ambiguity
+    if (!effectiveTenantId) return;
+    try {
+      const client = createClient(apiUrl, apiKey ?? undefined, {
+        ...(effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : {}),
+        ...(process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_USE_AUTH_HEADER === 'true' && idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+      });
+      client.threads
+        .create({ metadata: { tenant_id: effectiveTenantId }, graphId: assistantId })
+        .then((t) => {
+          setThreadId(t.thread_id);
+          precreatedRef.current = true;
+        })
+        .catch(() => {});
+    } catch {}
+  }, [assistantId, effectiveTenantId, apiUrl, apiKey, idToken, threadId, setThreadId]);
   const streamValue = useTypedStream({
     apiUrl,
     apiKey: apiKey ?? undefined,
@@ -153,6 +175,29 @@ const StreamSession = ({
     },
     onThreadId: (id) => {
       setThreadId(id);
+      // Optimistically add the new thread to history so the sidebar updates immediately
+      try {
+        setThreads((existing) => mergeThreadLists(existing, [{ thread_id: id } as any]));
+      } catch {}
+      // Ensure thread carries tenant metadata even if auto-created by the SDK
+      (async () => {
+        try {
+          if (!effectiveTenantId) return;
+          const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
+          const base = useProxy ? "/api" : apiUrl;
+          const res = await fetch(`${base}/threads/${id}`, {
+            method: "PATCH",
+            credentials: "include",
+            headers: {
+              "Content-Type": "application/json",
+              ...(effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : {}),
+              ...(process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_USE_AUTH_HEADER === 'true' && idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+            },
+            body: JSON.stringify({ metadata: { tenant_id: effectiveTenantId } }),
+          });
+          // ignore non-2xx; it's a best-effort
+        } catch {}
+      })();
       // Refetch threads list when thread ID changes.
       // Wait for some seconds before fetching so we're able to get the new thread that was created.
       sleep()

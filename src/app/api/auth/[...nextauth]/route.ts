@@ -2,6 +2,18 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { Issuer } from "openid-client";
 
+function decodeJwtNoVerify(token: string): any | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+    const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const json = Buffer.from(payload, "base64").toString("utf8");
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
 async function buildProviders() {
   const providers: any[] = [];
   const issuerUrl = process.env.NEXIUS_ISSUER;
@@ -23,7 +35,10 @@ async function buildProviders() {
         issuer: discovered.issuer,
         wellKnown: `${discovered.issuer}/.well-known/openid-configuration`,
         profile(profile: any) {
-          return { id: profile.sub, email: profile.email } as any;
+          // Preserve common custom claims so downstream can read tenant/roles
+          const tenant_id = (profile as any)?.tenant_id ?? (profile as any)?.["https://claims/tenant_id"]; 
+          const roles = (profile as any)?.roles ?? (profile as any)?.["https://claims/roles"]; 
+          return { id: profile.sub, email: profile.email, tenant_id, roles } as any;
         },
       });
     } catch (e) {
@@ -88,6 +103,16 @@ const handler = NextAuth({
         null;
       (token as any).roles =
         anyProf?.roles ?? anyProf?.["https://claims/roles"] ?? (token as any).roles ?? [];
+
+      // Fallback: if still missing, decode id_token and extract claims
+      if (!(token as any).tenant_id && account?.id_token) {
+        const claims = decodeJwtNoVerify(account.id_token);
+        if (claims) {
+          (token as any).tenant_id = claims.tenant_id ?? claims["https://claims/tenant_id"] ?? null;
+          if (!email && claims.email) (token as any).email = claims.email;
+          (token as any).roles = claims.roles ?? claims["https://claims/roles"] ?? (token as any).roles ?? [];
+        }
+      }
       return token;
     },
     async session({ session, token }) {

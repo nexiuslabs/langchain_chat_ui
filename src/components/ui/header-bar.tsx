@@ -199,6 +199,7 @@ export default function HeaderBar() {
       // Clear NextAuth session cookie without redirecting yet
       await signOut({ redirect: false });
     } catch {}
+    try { if (typeof window !== 'undefined') window.localStorage.removeItem('lg:chat:tenantId'); } catch {}
     try {
       const issuer = issuerFromSession || process.env.NEXT_PUBLIC_NEXIUS_ISSUER || "";
       const base = issuer.replace(/\/+$/, "");

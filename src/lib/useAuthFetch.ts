@@ -6,14 +6,12 @@ export function useAuthFetch() {
   const { data: session } = useSession();
   const idToken = (session as any)?.idToken as string | undefined;
   const sessionTenantId = (session as any)?.tenantId as string | undefined;
-  const enabled = (process.env.NEXT_PUBLIC_ENABLE_TENANT_SWITCHER || "").toLowerCase() === "true";
   // Prevent infinite refresh loops on persistent 401s
   let didRefresh = false;
 
   function tenantOverride(): string | undefined {
-    if (!enabled) return sessionTenantId;
     try {
-      const v = window.localStorage.getItem("lg:chat:tenantId");
+      const v = typeof window !== 'undefined' ? window.localStorage.getItem("lg:chat:tenantId") : null;
       return v || sessionTenantId;
     } catch {
       return sessionTenantId;

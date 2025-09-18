@@ -57,9 +57,9 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
   const { data: session } = useSession();
   const sessionTenantId = (session as any)?.tenantId as string | undefined;
   const effectiveTenantId = (() => {
+    // Prefer explicit override in localStorage when present (set after cookie login)
     try {
-      const enabled = (process.env.NEXT_PUBLIC_ENABLE_TENANT_SWITCHER || "").toLowerCase() === "true";
-      if (enabled && typeof window !== 'undefined') {
+      if (typeof window !== 'undefined') {
         const v = window.localStorage.getItem('lg:chat:tenantId');
         if (v) return v;
       }
@@ -68,14 +68,29 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
   })();
 
   const threads = useMemo(() => {
-    if (!effectiveTenantId) return [];
+    // Fallback bucket when tenant is unknown so current thread can still show
+    const key = effectiveTenantId || "__default__";
+    if (!effectiveTenantId) {
+      return tenantThreads.get(key) ?? [];
+    }
     return readTenantThreads(tenantThreads, effectiveTenantId);
   }, [tenantThreads, effectiveTenantId]);
 
   const setThreads = useCallback(
     (value: SetStateAction<Thread[]>) => {
-      if (!effectiveTenantId) return;
       setTenantThreads((prev) => {
+        if (!effectiveTenantId) {
+          // Write into fallback bucket without tenant scoping
+          const key = "__default__";
+          const current = prev.get(key) ?? [];
+          const nextList =
+            typeof value === "function"
+              ? (value as (prevState: Thread[]) => Thread[])(current)
+              : value;
+          const next = new Map(prev);
+          next.set(key, nextList);
+          return next;
+        }
         const current = readTenantThreads(prev, effectiveTenantId);
         const nextList =
           typeof value === "function"
@@ -89,13 +104,16 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
   );
 
   const getThreads = useCallback(async (): Promise<Thread[]> => {
+    // Enforce tenant isolation: do not fetch when tenant is unknown
     if (!apiUrl || !assistantId || !effectiveTenantId) return [];
     const defaultHeaders = effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : undefined;
     const client = createClient(clientBase, getApiKey() ?? undefined, defaultHeaders);
 
+    // Important: assistant/graph identifier must be top-level filters, not in metadata
+    const idFilter = getThreadSearchMetadata(assistantId);
     const threads = await client.threads.search({
+      ...idFilter,
       metadata: {
-        ...getThreadSearchMetadata(assistantId),
         ...(effectiveTenantId ? { tenant_id: effectiveTenantId } : {}),
       },
       limit: 100,
@@ -103,7 +121,6 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
 
     const scopedThreads = scopeThreadsToTenant(threads, effectiveTenantId);
     setTenantThreads((prev) => writeTenantThreads(prev, effectiveTenantId, scopedThreads));
-
     return scopedThreads;
   }, [apiUrl, assistantId, clientBase, effectiveTenantId]);
 

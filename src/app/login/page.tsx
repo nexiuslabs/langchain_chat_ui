@@ -18,6 +18,13 @@ export default function LoginPage() {
       body: JSON.stringify({ email, password }),
     });
     if (res.ok) {
+      try {
+        const body = await res.json();
+        const tid = body?.tenant_id || null;
+        if (tid && typeof window !== 'undefined') {
+          try { window.localStorage.setItem('lg:chat:tenantId', String(tid)); } catch {}
+        }
+      } catch {}
       window.location.href = "/";
     } else {
       const body = await res.json().catch(() => ({} as any));
