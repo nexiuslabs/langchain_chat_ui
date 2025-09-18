@@ -92,7 +92,8 @@ export default function ThreadHistory() {
       .then(setThreads)
       .catch(console.error)
       .finally(() => setThreadsLoading(false));
-  }, []);
+    // Re-fetch whenever tenant/assistant context changes (getThreads identity changes)
+  }, [getThreads, setThreads, setThreadsLoading]);
 
   return (
     <>

@@ -12,6 +12,7 @@ import {
   SetStateAction,
 } from "react";
 import { createClient } from "./client";
+import { useSession } from "next-auth/react";
 
 interface ThreadContextType {
   getThreads: () => Promise<Thread[]>;
@@ -45,20 +46,34 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
   const assistantId = assistantIdQ || (process.env.NEXT_PUBLIC_ASSISTANT_ID || "");
   const [threads, setThreads] = useState<Thread[]>([]);
   const [threadsLoading, setThreadsLoading] = useState(false);
+  const { data: session } = useSession();
+  const sessionTenantId = (session as any)?.tenantId as string | undefined;
+  const effectiveTenantId = (() => {
+    try {
+      const enabled = (process.env.NEXT_PUBLIC_ENABLE_TENANT_SWITCHER || "").toLowerCase() === "true";
+      if (enabled && typeof window !== 'undefined') {
+        const v = window.localStorage.getItem('lg:chat:tenantId');
+        if (v) return v;
+      }
+    } catch {}
+    return sessionTenantId;
+  })();
 
   const getThreads = useCallback(async (): Promise<Thread[]> => {
     if (!apiUrl || !assistantId) return [];
-    const client = createClient(clientBase, getApiKey() ?? undefined);
+    const defaultHeaders = effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : undefined;
+    const client = createClient(clientBase, getApiKey() ?? undefined, defaultHeaders);
 
     const threads = await client.threads.search({
       metadata: {
         ...getThreadSearchMetadata(assistantId),
+        ...(effectiveTenantId ? { tenant_id: effectiveTenantId } : {}),
       },
       limit: 100,
     });
 
     return threads;
-  }, [clientBase, assistantId]);
+  }, [clientBase, assistantId, effectiveTenantId]);
 
   const value = {
     getThreads,

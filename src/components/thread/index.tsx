@@ -157,6 +157,8 @@ export function Thread() {
   const stream = useStreamContext();
   const messages = stream.messages;
   const isLoading = stream.isLoading;
+  const streamClient: any = (stream as any)?.client;
+  const assistantIdFromStream: string | undefined = (stream as any)?.assistantId;
 
   const lastError = useRef<string | undefined>(undefined);
 
@@ -166,6 +168,27 @@ export function Thread() {
     // close artifact and reset artifact context
     closeArtifact();
     setArtifactContext({});
+  };
+
+  // Create a tenant-scoped thread when starting a new one to ensure proper metadata and isolation
+  const ensureTenantThread = async () => {
+    if (threadId) return threadId;
+    const tenant = tenantId || undefined;
+    try {
+      if (streamClient && assistantIdFromStream) {
+        const t = await streamClient.threads.create({
+          metadata: {
+            ...(tenant ? { tenant_id: tenant } : {}),
+          },
+          graphId: assistantIdFromStream,
+        });
+        setThreadId(t.thread_id);
+        return t.thread_id as string;
+      }
+    } catch (e) {
+      // ignore and let useStream create one if needed
+    }
+    return null;
   };
 
   useEffect(() => {
@@ -210,7 +233,7 @@ export function Thread() {
     prevMessageLength.current = messages.length;
   }, [messages]);
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if ((input.trim().length === 0 && contentBlocks.length === 0) || isLoading)
       return;
@@ -230,6 +253,8 @@ export function Thread() {
     const baseCtx = Object.keys(artifactContext).length > 0 ? artifactContext : undefined;
     const context = { ...(baseCtx || {}), ...(tenantId ? { tenant_id: tenantId } : {}) } as any;
 
+    // Ensure a tenant-scoped thread exists before first submit
+    await ensureTenantThread();
     // Send only the new human message to the server; keep tool responses client-side for UI stability
     stream.submit(
       { messages: newHumanMessage, context },
@@ -418,21 +443,22 @@ export function Thread() {
                     const enriched = messages
                       .filter((m) => !m.id?.startsWith(DO_NOT_RENDER_ID_PREFIX))
                       .filter((m) => allowedTypes.has(m.type as string))
-                      .map((m, i) => ({ m, i, meta: stream.getMessagesMetadata(m, i) }))
-                      // Only include items with a stable persisted timestamp
-                      .filter((x) => !!(x.meta?.firstSeenState?.created_at));
+                      .map((m, i) => ({ m, i, meta: stream.getMessagesMetadata(m, i) }));
                     const parseTs = (s?: string | null) => {
                       if (!s) return NaN;
                       const t = Date.parse(s);
                       return Number.isNaN(t) ? NaN : t;
                     };
-                    // 2) Sort strictly by timestamp ascending; fallback to original order when missing
+                    // 2) Sort: persisted first strictly by timestamp asc; optimistics (no ts) come last by insertion order
                     enriched.sort((a, b) => {
                       const ta = parseTs(a.meta?.firstSeenState?.created_at as any);
                       const tb = parseTs(b.meta?.firstSeenState?.created_at as any);
-                      if (Number.isNaN(ta) && Number.isNaN(tb)) return a.i - b.i;
-                      if (Number.isNaN(ta)) return -1;
-                      if (Number.isNaN(tb)) return 1;
+                      const aMissing = Number.isNaN(ta);
+                      const bMissing = Number.isNaN(tb);
+                      if (aMissing && bMissing) return a.i - b.i;
+                      if (aMissing) return 1;  // optimistic (no ts) after persisted
+                      if (bMissing) return -1;
+                      if (ta === tb) return a.i - b.i;
                       return ta - tb;
                     });
                     // 3) Deduplicate by messageId (preferred), else by role+text
