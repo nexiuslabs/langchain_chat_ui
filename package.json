@@ -14,6 +14,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "pnpm exec tsc -p tsconfig.test.json && node --test .tmp-tests/__tests__/mergeConversation.test.js && rm -rf .tmp-tests",
     "lint:fix": "next lint --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

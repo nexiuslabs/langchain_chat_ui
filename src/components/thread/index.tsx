@@ -415,6 +415,7 @@ export function Thread() {
                   {(() => {
                     // Normalize stream messages to ChatMsg shape
                     const allowedTypes = new Set(["human", "ai", "system"]);
+                    const seenMessageIds = new Set<string>();
                     const normalized: (ChatMsg | null)[] = messages
                       .filter((m) => !m.id?.startsWith(DO_NOT_RENDER_ID_PREFIX))
                       .filter((m) => allowedTypes.has(m.type as string))
@@ -424,8 +425,17 @@ export function Thread() {
                         const text = getContentString((m as any).content ?? "");
                         const ts = (meta?.firstSeenState?.created_at as unknown as string) || "";
                         if (!ts) return null; // only render persisted messages with a stable timestamp
-                        const id = (m.id as string) || `${role}:${ts}:${i}`;
-                        return { id, role, text, timestamp: ts };
+                        const metadataId =
+                          (meta?.firstSeenState?.message_id as string | undefined) ||
+                          (meta?.message_id as string | undefined);
+                        const candidateId = metadataId || (m.id as string | undefined) || undefined;
+                        if (candidateId) {
+                          const dedupeKey = String(candidateId);
+                          if (seenMessageIds.has(dedupeKey)) return null;
+                          seenMessageIds.add(dedupeKey);
+                          return { id: dedupeKey, role, text, timestamp: ts };
+                        }
+                        return null;
                       })
                       .filter(Boolean) as ChatMsg[];
                     const merged = mergeConversation(normalized, []);
