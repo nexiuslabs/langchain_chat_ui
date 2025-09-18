@@ -16,7 +16,7 @@ export function mergeConversation(existing_history: ChatMsg[], new_messages: Cha
   const all: ChatMsg[] = [...(existing_history || []), ...(new_messages || [])]
     .filter(Boolean)
     .map((m) => ({
-      id: String(m.id || ""),
+      id: m.id ? String(m.id) : "",
       role: (m.role as ChatMsg["role"]) || "assistant",
       text: String((m.text ?? "").toString()),
       timestamp: String(m.timestamp || ""),
@@ -28,18 +28,20 @@ export function mergeConversation(existing_history: ChatMsg[], new_messages: Cha
   const seenTextTs = new Set<string>();
   const unique: ChatMsg[] = [];
   for (const m of all) {
-    const idKey = `id:${m.id}`;
+    const hasId = m.id.trim().length > 0;
+    const idKey = hasId ? `id:${m.id}` : null;
+    if (idKey && seenIds.has(idKey)) {
+      continue;
+    }
     const textTsKey = `tt:${m.text}|${m.timestamp}`;
-    if (seenIds.has(idKey) || seenTextTs.has(textTsKey)) continue;
-    seenIds.add(idKey);
+    if (!idKey && seenTextTs.has(textTsKey)) {
+      continue;
+    }
+    if (idKey) {
+      seenIds.add(idKey);
+    }
     seenTextTs.add(textTsKey);
     unique.push(m);
   }
-  unique.sort((a, b) => {
-    const ta = Date.parse(a.timestamp);
-    const tb = Date.parse(b.timestamp);
-    if (ta === tb) return a.id.localeCompare(b.id);
-    return ta - tb;
-  });
   return unique;
 }
