@@ -7,12 +7,18 @@ import {
   useContext,
   ReactNode,
   useCallback,
+  useMemo,
   useState,
   Dispatch,
   SetStateAction,
 } from "react";
 import { createClient } from "./client";
 import { useSession } from "next-auth/react";
+import {
+  readTenantThreads,
+  scopeThreadsToTenant,
+  writeTenantThreads,
+} from "@/lib/threadTenants";
 
 interface ThreadContextType {
   getThreads: () => Promise<Thread[]>;
@@ -44,7 +50,9 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
     ? (typeof window !== 'undefined' ? new URL('/api', window.location.origin).toString() : apiUrl)
     : apiUrl;
   const assistantId = assistantIdQ || (process.env.NEXT_PUBLIC_ASSISTANT_ID || "");
-  const [threads, setThreads] = useState<Thread[]>([]);
+  const [tenantThreads, setTenantThreads] = useState<Map<string, Thread[]>>(
+    () => new Map(),
+  );
   const [threadsLoading, setThreadsLoading] = useState(false);
   const { data: session } = useSession();
   const sessionTenantId = (session as any)?.tenantId as string | undefined;
@@ -59,8 +67,29 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
     return sessionTenantId;
   })();
 
+  const threads = useMemo(() => {
+    if (!effectiveTenantId) return [];
+    return readTenantThreads(tenantThreads, effectiveTenantId);
+  }, [tenantThreads, effectiveTenantId]);
+
+  const setThreads = useCallback(
+    (value: SetStateAction<Thread[]>) => {
+      if (!effectiveTenantId) return;
+      setTenantThreads((prev) => {
+        const current = readTenantThreads(prev, effectiveTenantId);
+        const nextList =
+          typeof value === "function"
+            ? (value as (prevState: Thread[]) => Thread[])(current)
+            : value;
+        const scopedNext = scopeThreadsToTenant(nextList, effectiveTenantId);
+        return writeTenantThreads(prev, effectiveTenantId, scopedNext);
+      });
+    },
+    [effectiveTenantId],
+  );
+
   const getThreads = useCallback(async (): Promise<Thread[]> => {
-    if (!apiUrl || !assistantId) return [];
+    if (!apiUrl || !assistantId || !effectiveTenantId) return [];
     const defaultHeaders = effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : undefined;
     const client = createClient(clientBase, getApiKey() ?? undefined, defaultHeaders);
 
@@ -72,8 +101,11 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
       limit: 100,
     });
 
-    return threads;
-  }, [clientBase, assistantId, effectiveTenantId]);
+    const scopedThreads = scopeThreadsToTenant(threads, effectiveTenantId);
+    setTenantThreads((prev) => writeTenantThreads(prev, effectiveTenantId, scopedThreads));
+
+    return scopedThreads;
+  }, [apiUrl, assistantId, clientBase, effectiveTenantId]);
 
   const value = {
     getThreads,

@@ -26,6 +26,7 @@ import { getApiKey } from "@/lib/api-key";
 import { useThreads } from "./Thread";
 import { toast } from "sonner";
 import { useSession } from "next-auth/react";
+import { mergeThreadLists } from "@/lib/threadTenants";
 
 export type StateType = { messages: Message[]; ui?: UIMessage[] };
 
@@ -154,7 +155,13 @@ const StreamSession = ({
       setThreadId(id);
       // Refetch threads list when thread ID changes.
       // Wait for some seconds before fetching so we're able to get the new thread that was created.
-      sleep().then(() => getThreads().then(setThreads).catch(console.error));
+      sleep()
+        .then(() =>
+          getThreads().then((fetched) =>
+            setThreads((existing) => mergeThreadLists(existing, fetched)),
+          ),
+        )
+        .catch(console.error);
     },
   });
 
