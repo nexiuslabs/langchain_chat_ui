@@ -8,6 +8,8 @@ import { useSession } from "next-auth/react";
 import { Button } from "../ui/button";
 import { Checkpoint, Message } from "@langchain/langgraph-sdk";
 import { AssistantMessage, AssistantMessageLoading } from "./messages/ai";
+import { getContentString } from "./utils";
+import { mergeConversation, type ChatMsg } from "@/lib/mergeConversation";
 import { HumanMessage } from "./messages/human";
 import {
   DO_NOT_RENDER_ID_PREFIX,
@@ -228,8 +230,9 @@ export function Thread() {
     const baseCtx = Object.keys(artifactContext).length > 0 ? artifactContext : undefined;
     const context = { ...(baseCtx || {}), ...(tenantId ? { tenant_id: tenantId } : {}) } as any;
 
+    // Send only the new human message to the server; keep tool responses client-side for UI stability
     stream.submit(
-      { messages: [...toolMessages, newHumanMessage], context },
+      { messages: newHumanMessage, context },
       {
         streamMode: ["values"],
         optimisticValues: (prev) => ({
@@ -409,24 +412,43 @@ export function Thread() {
               contentClassName="pt-8 pb-16  max-w-3xl mx-auto flex flex-col gap-4 w-full"
               content={
                 <>
-                  {messages
-                    .filter((m) => !m.id?.startsWith(DO_NOT_RENDER_ID_PREFIX))
-                    .map((message, index) =>
-                      message.type === "human" ? (
-                        <HumanMessage
-                          key={message.id || `${message.type}-${index}`}
-                          message={message}
-                          isLoading={isLoading}
-                        />
+                  {(() => {
+                    // Normalize stream messages to ChatMsg shape
+                    const allowedTypes = new Set(["human", "ai", "system"]);
+                    const normalized: (ChatMsg | null)[] = messages
+                      .filter((m) => !m.id?.startsWith(DO_NOT_RENDER_ID_PREFIX))
+                      .filter((m) => allowedTypes.has(m.type as string))
+                      .map((m, i) => {
+                        const meta = stream.getMessagesMetadata(m, i);
+                        const role = m.type === "human" ? "user" : m.type === "ai" ? "assistant" : "system";
+                        const text = getContentString((m as any).content ?? "");
+                        const ts = (meta?.firstSeenState?.created_at as unknown as string) || "";
+                        if (!ts) return null; // only render persisted messages with a stable timestamp
+                        const id = (m.id as string) || `${role}:${ts}:${i}`;
+                        return { id, role, text, timestamp: ts };
+                      })
+                      .filter(Boolean) as ChatMsg[];
+                    const merged = mergeConversation(normalized, []);
+                    return merged.map((mm, idx) => {
+                      // Rehydrate to original components for rendering
+                      const isHuman = mm.role === "user";
+                      const uiMsg: any = {
+                        id: mm.id,
+                        type: isHuman ? "human" : mm.role === "assistant" ? "ai" : "system",
+                        content: mm.text,
+                      };
+                      return isHuman ? (
+                        <HumanMessage key={mm.id || idx} message={uiMsg} isLoading={isLoading} />
                       ) : (
                         <AssistantMessage
-                          key={message.id || `${message.type}-${index}`}
-                          message={message}
+                          key={mm.id || idx}
+                          message={uiMsg}
                           isLoading={isLoading}
                           handleRegenerate={handleRegenerate}
                         />
-                      ),
-                    )}
+                      );
+                    });
+                  })()}
                   {/* Special rendering case where there are no AI/tool messages, but there is an interrupt.
                     We need to render it outside of the messages list, since there are no messages to render */}
                   {hasNoAIOrToolMessages && !!stream.interrupt && (

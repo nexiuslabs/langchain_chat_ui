@@ -27,14 +27,22 @@ export function useAuthFetch() {
     const allowAuthHeader = process.env.NODE_ENV !== "production" && (process.env.NEXT_PUBLIC_USE_AUTH_HEADER || "").toLowerCase() === "true";
     if (allowAuthHeader && idToken) headers.set("Authorization", `Bearer ${idToken}`);
     if (tid) headers.set("X-Tenant-ID", tid);
-    // Proxy to /api to keep same-origin cookies when enabled
+    // Compute request URL and bases
     let target: RequestInfo | URL = input;
+    const urlStr = typeof input === 'string' ? input : (input as URL).toString();
+    const apiUrlEnv = process.env.NEXT_PUBLIC_API_URL || '';
+    const apiBaseEnv = process.env.NEXT_PUBLIC_API_BASE || '';
+    const isAbs = /^https?:\/\//i.test(urlStr);
+    const targetBase = isAbs
+      ? (urlStr.startsWith(apiUrlEnv) ? apiUrlEnv : (urlStr.startsWith(apiBaseEnv) ? apiBaseEnv : ''))
+      : '';
+    const isLangGraph = targetBase && targetBase === apiUrlEnv;
+    const isBackend = targetBase && targetBase === apiBaseEnv;
+    // Proxy to /api/backend ONLY for LangGraph calls when enabled
     try {
       const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
-      const base = process.env.NEXT_PUBLIC_API_URL || "";
-      const url = typeof input === 'string' ? input : (input as URL).toString();
-      if (useProxy && base && url.startsWith(base)) {
-        const u = new URL(url);
+      if (useProxy && isLangGraph) {
+        const u = new URL(urlStr);
         target = "/api/backend" + u.pathname + (u.search || "");
       }
     } catch {}
@@ -42,13 +50,13 @@ export function useAuthFetch() {
     const doFetch = async () => fetch(target, { ...init, headers, credentials: "include" });
     let res = await doFetch();
     if (res.status !== 401) return res;
-    // Attempt silent cookie refresh once, then retry the original request
+    // Attempt silent cookie refresh once (backend), then retry the original request
     const useAuthHeader = (process.env.NEXT_PUBLIC_USE_AUTH_HEADER || '').toLowerCase() === 'true';
     if (!didRefresh && !useAuthHeader) {
       try {
-        const base = process.env.NEXT_PUBLIC_API_URL || "";
-        const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
-        const refreshUrl = useProxy && base ? "/api/backend/auth/refresh" : `${base.replace(/\/$/, '')}/auth/refresh`;
+        // Prefer backend base for refresh if configured, otherwise fall back to request's base
+        const refreshBase = (process.env.NEXT_PUBLIC_API_BASE || '') || (targetBase || apiUrlEnv || "");
+        const refreshUrl = `${refreshBase.replace(/\/$/, '')}/auth/refresh`;
         const r = await fetch(refreshUrl, { method: 'POST', credentials: 'include' });
         didRefresh = true;
         if (r.ok) {

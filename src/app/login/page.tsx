@@ -6,9 +6,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const apiBase = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === 'true'
-    ? "/api/backend"
-    : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001");
+  const apiBase = (process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001");
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();

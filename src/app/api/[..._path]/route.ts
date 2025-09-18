@@ -1,10 +1,11 @@
 export const runtime = "edge";
 
-type Ctx = { params: { _path: string[] } };
+type Params = { _path: string[] };
 
-function targetUrl(req: Request, params: Ctx["params"]): string {
+async function targetUrl(req: Request, params: Promise<Params> | Params): Promise<string> {
+  const { _path } = await params;
   const base = process.env.LANGGRAPH_API_URL || process.env.NEXT_PUBLIC_API_URL || "";
-  const path = (params?._path || []).join("/");
+  const path = (_path || []).join("/");
   const url = new URL(base);
   // Ensure trailing slash once
   const basePath = url.pathname.endsWith("/") ? url.pathname : url.pathname + "/";
@@ -15,8 +16,8 @@ function targetUrl(req: Request, params: Ctx["params"]): string {
   return url.toString();
 }
 
-async function forward(method: string, request: Request, ctx: Ctx) {
-  const url = targetUrl(request, ctx.params);
+async function forward(method: string, request: Request, params: Promise<Params> | Params) {
+  const url = await targetUrl(request, params);
   const headers = new Headers();
   // Forward selected headers from client
   const auth = request.headers.get("authorization");
@@ -47,21 +48,21 @@ async function forward(method: string, request: Request, ctx: Ctx) {
   });
 }
 
-export async function GET(request: Request, ctx: Ctx) {
-  return forward("GET", request, ctx);
+export async function GET(request: Request, { params }: { params: Promise<Params> | Params }) {
+  return forward("GET", request, params);
 }
-export async function POST(request: Request, ctx: Ctx) {
-  return forward("POST", request, ctx);
+export async function POST(request: Request, { params }: { params: Promise<Params> | Params }) {
+  return forward("POST", request, params);
 }
-export async function PUT(request: Request, ctx: Ctx) {
-  return forward("PUT", request, ctx);
+export async function PUT(request: Request, { params }: { params: Promise<Params> | Params }) {
+  return forward("PUT", request, params);
 }
-export async function PATCH(request: Request, ctx: Ctx) {
-  return forward("PATCH", request, ctx);
+export async function PATCH(request: Request, { params }: { params: Promise<Params> | Params }) {
+  return forward("PATCH", request, params);
 }
-export async function DELETE(request: Request, ctx: Ctx) {
-  return forward("DELETE", request, ctx);
+export async function DELETE(request: Request, { params }: { params: Promise<Params> | Params }) {
+  return forward("DELETE", request, params);
 }
-export async function OPTIONS(request: Request, ctx: Ctx) {
-  return forward("OPTIONS", request, ctx);
+export async function OPTIONS(request: Request, { params }: { params: Promise<Params> | Params }) {
+  return forward("OPTIONS", request, params);
 }

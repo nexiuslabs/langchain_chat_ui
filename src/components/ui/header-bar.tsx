@@ -73,6 +73,96 @@ export default function HeaderBar() {
 
   // No backlog badge polling
 
+  function useConnectionStatus() {
+    const [ok, setOk] = useState<boolean | null>(null);
+    useEffect(() => {
+      let cancelled = false;
+      const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || '').toLowerCase() === 'true';
+      const apiUrl = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '').get('apiUrl')
+        || (process.env.NEXT_PUBLIC_API_URL || '');
+      async function check() {
+        try {
+          const infoUrl = useProxy ? '/api/info' : `${apiUrl}/info`;
+          const altUrl  = useProxy ? '/api/assistants?limit=1' : `${apiUrl}/assistants?limit=1`;
+          const r1 = await fetch(infoUrl, { credentials: 'include' });
+          if (cancelled) return;
+          if (r1.ok || [401,403,404,405].includes(r1.status)) { setOk(true); return; }
+          const r2 = await fetch(altUrl, { credentials: 'include' });
+          if (!cancelled) setOk(r2.ok || [401,403,404,405].includes(r2.status));
+        } catch {
+          if (!cancelled) setOk(false);
+        }
+      }
+      void check();
+      const id = setInterval(check, 30000);
+      return () => { cancelled = true; clearInterval(id); };
+    }, []);
+    return ok;
+  }
+
+  function ConnectionBadge() {
+    const ok = useConnectionStatus();
+    if (ok === null) return null;
+    return (
+      <span className={"text-xs px-2 py-1 rounded " + (ok ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700")}
+            title={ok ? 'LangGraph connection healthy' : 'LangGraph connection failed'}>
+        {ok ? 'Connected' : 'Offline'}
+      </span>
+    );
+  }
+
+  function ShortlistStatusBadge() {
+    const [data, setData] = useState<{ total_scored: number; last_refreshed_at: string | null } | null>(null);
+    const [err, setErr] = useState<string | null>(null);
+    useEffect(() => {
+      let cancelled = false;
+      let iv: any;
+      async function poll() {
+        try {
+          const res = await authFetch(`${apiBase}/shortlist/status`);
+          if (!res.ok) throw new Error(`status ${res.status}`);
+          const j = await res.json();
+          if (!cancelled) setData({ total_scored: j.total_scored ?? 0, last_refreshed_at: j.last_refreshed_at ?? null });
+        } catch (e: any) {
+          if (!cancelled) setErr(String(e));
+        }
+      }
+      void poll();
+      iv = setInterval(poll, 30000);
+      return () => { cancelled = true; if (iv) clearInterval(iv); };
+    }, [apiBase, authFetch]);
+    if (!data) return null;
+    const ts = data.last_refreshed_at ? new Date(data.last_refreshed_at) : null;
+    const when = ts ? new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(ts) : "n/a";
+    return (
+      <span className="text-xs text-muted-foreground" title={`Last refreshed: ${ts?.toLocaleString() || 'n/a'}`}>
+        Shortlist: {data.total_scored} • {when}
+      </span>
+    );
+  }
+
+  function ExportButtons() {
+    async function dl(path: string, filename: string) {
+      const res = await authFetch(`${apiBase}${path}`);
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+    return (
+      <div className="flex items-center gap-2">
+        <button className="text-xs px-2 py-1 border rounded" onClick={() => dl(`/export/latest_scores.csv?limit=500`, `shortlist.csv`)} title="Download latest shortlist as CSV">CSV</button>
+        <button className="text-xs px-2 py-1 border rounded" onClick={() => dl(`/export/latest_scores.json?limit=500`, `shortlist.json`)} title="Download latest shortlist as JSON">JSON</button>
+      </div>
+    );
+  }
+
   const applyOverride = () => {
     try {
       if (override) {
@@ -145,6 +235,9 @@ export default function HeaderBar() {
           )}
         </div>
         <div className="flex items-center gap-3">
+          <ConnectionBadge />
+          <ShortlistStatusBadge />
+          <ExportButtons />
           <button
             className="text-sm px-2 py-1 border rounded"
             onClick={verifyOdoo}

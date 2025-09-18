@@ -81,10 +81,13 @@ async function checkGraphStatus(
 
     const res = await fetch(infoUrl, { credentials: "include", headers });
     if (res.ok) return true;
+    // Treat common auth/method errors as "reachable" (server up but protected)
+    if ([401, 403, 404, 405].includes(res.status)) return true;
     // Fallback to a LangGraph endpoint that is typically open in local dev
     try {
       const r2 = await fetch(altUrl, { credentials: "include", headers });
       if (r2.ok) return true;
+      if ([401, 403, 404, 405].includes(r2.status)) return true;
     } catch {}
     return false;
   } catch (e) {
@@ -233,6 +236,11 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
 
   // Determine final values to use, prioritizing URL params then env vars
   const finalApiUrl = apiUrl || envApiUrl;
+  const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
+  // use absolute URL when proxying, to satisfy new URL() inside SDK
+  const effectiveApiUrl = useProxy
+    ? (typeof window !== 'undefined' ? new URL('/api', window.location.origin).toString() : finalApiUrl)
+    : finalApiUrl;
   const finalAssistantId = assistantId || envAssistantId;
 
   // Show the form if we: don't have an API URL, or don't have an assistant ID
@@ -338,11 +346,7 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
   }
 
   return (
-    <StreamSession
-      apiKey={apiKey}
-      apiUrl={finalApiUrl!}
-      assistantId={finalAssistantId!}
-    >
+    <StreamSession apiKey={apiKey} apiUrl={effectiveApiUrl!} assistantId={finalAssistantId!}>
       {children}
     </StreamSession>
   );
