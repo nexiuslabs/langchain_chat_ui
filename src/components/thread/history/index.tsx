@@ -82,18 +82,17 @@ export default function ThreadHistory() {
     parseAsBoolean.withDefault(false),
   );
 
-  const { getThreads, threads, setThreads, threadsLoading, setThreadsLoading } =
+  const { getThreads, threads, threadsLoading, setThreadsLoading } =
     useThreads();
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     setThreadsLoading(true);
     getThreads()
-      .then(setThreads)
       .catch(console.error)
       .finally(() => setThreadsLoading(false));
     // Re-fetch whenever tenant/assistant context changes (getThreads identity changes)
-  }, [getThreads, setThreads, setThreadsLoading]);
+  }, [getThreads, setThreadsLoading]);
 
   return (
     <>

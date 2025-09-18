@@ -10,7 +10,9 @@
   },
   "include": [
     "src/lib/mergeConversation.ts",
-    "src/lib/__tests__/mergeConversation.test.ts"
+    "src/lib/__tests__/mergeConversation.test.ts",
+    "src/lib/threadTenants.ts",
+    "src/lib/__tests__/tenantThreads.test.ts"
   ]
 }
 
