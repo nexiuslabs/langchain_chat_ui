@@ -9,7 +9,6 @@ import { Button } from "../ui/button";
 import { Checkpoint, Message } from "@langchain/langgraph-sdk";
 import { AssistantMessage, AssistantMessageLoading } from "./messages/ai";
 import { getContentString } from "./utils";
-import { mergeConversation, type ChatMsg } from "@/lib/mergeConversation";
 import { HumanMessage } from "./messages/human";
 import {
   DO_NOT_RENDER_ID_PREFIX,
@@ -413,41 +412,54 @@ export function Thread() {
               content={
                 <>
                   {(() => {
-                    // Normalize stream messages to ChatMsg shape
+                    // 1) Keep only conversation roles (system | user | assistant); drop tool messages
                     const allowedTypes = new Set(["human", "ai", "system"]);
-                    const normalized: (ChatMsg | null)[] = messages
+                    const enriched = messages
                       .filter((m) => !m.id?.startsWith(DO_NOT_RENDER_ID_PREFIX))
                       .filter((m) => allowedTypes.has(m.type as string))
-                      .map((m, i) => {
-                        const meta = stream.getMessagesMetadata(m, i);
-                        const role = m.type === "human" ? "user" : m.type === "ai" ? "assistant" : "system";
-                        const text = getContentString((m as any).content ?? "");
-                        const ts = (meta?.firstSeenState?.created_at as unknown as string) || "";
-                        if (!ts) return null; // only render persisted messages with a stable timestamp
-                        const id = (m.id as string) || `${role}:${ts}:${i}`;
-                        return { id, role, text, timestamp: ts };
-                      })
-                      .filter(Boolean) as ChatMsg[];
-                    const merged = mergeConversation(normalized, []);
-                    return merged.map((mm, idx) => {
-                      // Rehydrate to original components for rendering
-                      const isHuman = mm.role === "user";
-                      const uiMsg: any = {
-                        id: mm.id,
-                        type: isHuman ? "human" : mm.role === "assistant" ? "ai" : "system",
-                        content: mm.text,
-                      };
-                      return isHuman ? (
-                        <HumanMessage key={mm.id || idx} message={uiMsg} isLoading={isLoading} />
+                      .map((m, i) => ({ m, i, meta: stream.getMessagesMetadata(m, i) }));
+                    const parseTs = (s?: string | null) => {
+                      if (!s) return NaN;
+                      const t = Date.parse(s);
+                      return Number.isNaN(t) ? NaN : t;
+                    };
+                    // 2) Sort strictly by timestamp ascending; fallback to original order when missing
+                    enriched.sort((a, b) => {
+                      const ta = parseTs(a.meta?.firstSeenState?.created_at as any);
+                      const tb = parseTs(b.meta?.firstSeenState?.created_at as any);
+                      if (Number.isNaN(ta) && Number.isNaN(tb)) return a.i - b.i;
+                      if (Number.isNaN(ta)) return -1;
+                      if (Number.isNaN(tb)) return 1;
+                      return ta - tb;
+                    });
+                    // 3) Deduplicate by id when present; otherwise by role+text+timestamp
+                    const seen = new Set<string>();
+                    const roleOf = (t: string) => (t === "human" ? "user" : t === "ai" ? "assistant" : t);
+                    const finalList = [] as typeof enriched;
+                    for (const item of enriched) {
+                      const { m, i, meta } = item;
+                      const idKey = m.id ? `id:${m.id}` : null;
+                      if (idKey && seen.has(idKey)) continue;
+                      const contentText = getContentString((m as any).content ?? "");
+                      const ts = (meta?.firstSeenState?.created_at as any) || `idx:${i}`;
+                      const key = idKey || `${roleOf(m.type)}|${contentText}|${ts}`;
+                      if (seen.has(key)) continue;
+                      seen.add(key);
+                      finalList.push(item);
+                    }
+                    // 4) Render final merged conversation (system | user | assistant)
+                    return finalList.map(({ m, i }) =>
+                      m.type === "human" ? (
+                        <HumanMessage key={m.id || `${m.type}-${i}`} message={m} isLoading={isLoading} />
                       ) : (
                         <AssistantMessage
-                          key={mm.id || idx}
-                          message={uiMsg}
+                          key={m.id || `${m.type}-${i}`}
+                          message={m}
                           isLoading={isLoading}
                           handleRegenerate={handleRegenerate}
                         />
-                      );
-                    });
+                      ),
+                    );
                   })()}
                   {/* Special rendering case where there are no AI/tool messages, but there is an interrupt.
                     We need to render it outside of the messages list, since there are no messages to render */}
