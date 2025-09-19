@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "./.tmp-tests",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "target": "ES2019",
+    "jsx": "react-jsx"
+  },
+  "include": [
+    "src/lib/mergeConversation.ts",
+    "src/lib/__tests__/mergeConversation.test.ts",
+    "src/lib/threadTenants.ts",
+    "src/lib/__tests__/tenantThreads.test.ts"
+  ]
+}
+

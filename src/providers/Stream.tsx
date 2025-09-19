@@ -4,6 +4,7 @@ import React, {
   ReactNode,
   useState,
   useEffect,
+  useRef,
 } from "react";
 import { useStream } from "@langchain/langgraph-sdk/react";
 import { type Message } from "@langchain/langgraph-sdk";
@@ -24,6 +25,9 @@ import { PasswordInput } from "@/components/ui/password-input";
 import { getApiKey } from "@/lib/api-key";
 import { useThreads } from "./Thread";
 import { toast } from "sonner";
+import { useSession } from "next-auth/react";
+import { mergeThreadLists } from "@/lib/threadTenants";
+import { createClient } from "./client";
 
 export type StateType = { messages: Message[]; ui?: UIMessage[] };
 
@@ -49,17 +53,45 @@ async function sleep(ms = 4000) {
 async function checkGraphStatus(
   apiUrl: string,
   apiKey: string | null,
+  {
+    idToken,
+    tenantId,
+  }: { idToken?: string; tenantId?: string | null } = {},
 ): Promise<boolean> {
   try {
-    const res = await fetch(`${apiUrl}/info`, {
-      ...(apiKey && {
-        headers: {
-          "X-Api-Key": apiKey,
-        },
-      }),
-    });
+    const headers: Record<string, string> = {};
 
-    return res.ok;
+    if (apiKey) {
+      headers["X-Api-Key"] = apiKey;
+    }
+
+    if (tenantId) {
+      headers["X-Tenant-ID"] = tenantId;
+    }
+
+    if (
+      process.env.NODE_ENV !== "production" &&
+      process.env.NEXT_PUBLIC_USE_AUTH_HEADER === "true" &&
+      idToken
+    ) {
+      headers.Authorization = `Bearer ${idToken}`;
+    }
+
+    const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
+    const infoUrl = useProxy ? "/api/info" : `${apiUrl}/info`;
+    const altUrl = useProxy ? "/api/assistants?limit=1" : `${apiUrl}/assistants?limit=1`;
+
+    const res = await fetch(infoUrl, { credentials: "include", headers });
+    if (res.ok) return true;
+    // Treat common auth/method errors as "reachable" (server up but protected)
+    if ([401, 403, 404, 405].includes(res.status)) return true;
+    // Fallback to a LangGraph endpoint that is typically open in local dev
+    try {
+      const r2 = await fetch(altUrl, { credentials: "include", headers });
+      if (r2.ok) return true;
+      if ([401, 403, 404, 405].includes(r2.status)) return true;
+    } catch {}
+    return false;
   } catch (e) {
     console.error(e);
     return false;
@@ -77,13 +109,62 @@ const StreamSession = ({
   apiUrl: string;
   assistantId: string;
 }) => {
+  const { data: session, status } = useSession();
+  const idToken = (session as any)?.idToken as string | undefined;
+  const sessionTenantId = (session as any)?.tenantId as string | undefined;
+  const [tenantOverride, setTenantOverride] = useState<string | null>(null);
+  const checkingRef = useRef(false);
+  const toastShownRef = useRef(false);
+  // Read tenant override from localStorage when present (supports cookie-login scenario)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const v = window.localStorage.getItem('lg:chat:tenantId');
+      if (v) setTenantOverride(v);
+    } catch {}
+  }, []);
+  const effectiveTenantId = tenantOverride || sessionTenantId;
   const [threadId, setThreadId] = useQueryState("threadId");
   const { getThreads, setThreads } = useThreads();
+
+  // Pre-create a tenant-scoped thread to ensure metadata is attached
+  const precreatedRef = useRef(false);
+  useEffect(() => {
+    if (precreatedRef.current) return;
+    if (threadId) return; // already have a thread
+    if (!assistantId) return;
+    // Require tenant id to avoid cross-tenant ambiguity
+    if (!effectiveTenantId) return;
+    try {
+      const client = createClient(apiUrl, apiKey ?? undefined, {
+        ...(effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : {}),
+        ...(process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_USE_AUTH_HEADER === 'true' && idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+      });
+      client.threads
+        .create({ metadata: { tenant_id: effectiveTenantId }, graphId: assistantId })
+        .then((t) => {
+          setThreadId(t.thread_id);
+          precreatedRef.current = true;
+        })
+        .catch(() => {});
+    } catch {}
+  }, [assistantId, effectiveTenantId, apiUrl, apiKey, idToken, threadId, setThreadId]);
   const streamValue = useTypedStream({
     apiUrl,
     apiKey: apiKey ?? undefined,
     assistantId,
     threadId: threadId ?? null,
+    defaultHeaders: {
+      ...(effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : {}),
+      ...(process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_USE_AUTH_HEADER === 'true' && idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+    },
+    fetchOptions: {
+      credentials: "include",
+      headers: {
+        ...(effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : {}),
+        ...(process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_USE_AUTH_HEADER === 'true' && idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+      },
+    },
     onCustomEvent: (event, options) => {
       if (isUIMessage(event) || isRemoveUIMessage(event)) {
         options.mutate((prev) => {
@@ -94,29 +175,82 @@ const StreamSession = ({
     },
     onThreadId: (id) => {
       setThreadId(id);
+      // Optimistically add the new thread to history so the sidebar updates immediately
+      try {
+        setThreads((existing) => mergeThreadLists(existing, [{ thread_id: id } as any]));
+      } catch {}
+      // Ensure thread carries tenant metadata even if auto-created by the SDK
+      (async () => {
+        try {
+          if (!effectiveTenantId) return;
+          const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
+          const base = useProxy ? "/api" : apiUrl;
+          const res = await fetch(`${base}/threads/${id}`, {
+            method: "PATCH",
+            credentials: "include",
+            headers: {
+              "Content-Type": "application/json",
+              ...(effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : {}),
+              ...(process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_USE_AUTH_HEADER === 'true' && idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+            },
+            body: JSON.stringify({ metadata: { tenant_id: effectiveTenantId } }),
+          });
+          // ignore non-2xx; it's a best-effort
+        } catch {}
+      })();
       // Refetch threads list when thread ID changes.
       // Wait for some seconds before fetching so we're able to get the new thread that was created.
-      sleep().then(() => getThreads().then(setThreads).catch(console.error));
+      sleep()
+        .then(() =>
+          getThreads().then((fetched) =>
+            setThreads((existing) => mergeThreadLists(existing, fetched)),
+          ),
+        )
+        .catch(console.error);
     },
   });
 
   useEffect(() => {
-    checkGraphStatus(apiUrl, apiKey).then((ok) => {
-      if (!ok) {
-        toast.error("Failed to connect to LangGraph server", {
-          description: () => (
-            <p>
-              Please ensure your graph is running at <code>{apiUrl}</code> and
-              your API key is correctly set (if connecting to a deployed graph).
-            </p>
-          ),
-          duration: 10000,
-          richColors: true,
-          closeButton: true,
-        });
-      }
-    });
-  }, [apiKey, apiUrl]);
+    // Avoid duplicate toasts/checks in React Strict Mode by persisting per-URL flag
+    if (typeof window !== 'undefined') {
+      try {
+        const key = `lg:chat:connToast:${apiUrl}`;
+        toastShownRef.current = window.sessionStorage.getItem(key) === '1';
+      } catch {}
+    }
+
+    if (checkingRef.current) return;
+    checkingRef.current = true;
+    checkGraphStatus(apiUrl, apiKey, {
+      idToken,
+      tenantId: effectiveTenantId,
+    })
+      .then((ok) => {
+        if (!ok && !toastShownRef.current) {
+          toast.error("Failed to connect to LangGraph server", {
+            description: () => (
+              <p>
+                Please ensure your graph is running at <code>{apiUrl}</code> and
+                your API key is correctly set (if connecting to a deployed graph).
+              </p>
+            ),
+            duration: 10000,
+            richColors: true,
+            closeButton: true,
+          });
+          toastShownRef.current = true;
+          if (typeof window !== 'undefined') {
+            try {
+              const key = `lg:chat:connToast:${apiUrl}`;
+              window.sessionStorage.setItem(key, '1');
+            } catch {}
+          }
+        }
+      })
+      .finally(() => {
+        checkingRef.current = false;
+      });
+  }, [apiKey, apiUrl, effectiveTenantId, idToken]);
 
   return (
     <StreamContext.Provider value={streamValue}>
@@ -158,6 +292,11 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
 
   // Determine final values to use, prioritizing URL params then env vars
   const finalApiUrl = apiUrl || envApiUrl;
+  const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
+  // use absolute URL when proxying, to satisfy new URL() inside SDK
+  const effectiveApiUrl = useProxy
+    ? (typeof window !== 'undefined' ? new URL('/api', window.location.origin).toString() : finalApiUrl)
+    : finalApiUrl;
   const finalAssistantId = assistantId || envAssistantId;
 
   // Show the form if we: don't have an API URL, or don't have an assistant ID
@@ -263,11 +402,7 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
   }
 
   return (
-    <StreamSession
-      apiKey={apiKey}
-      apiUrl={apiUrl}
-      assistantId={assistantId}
-    >
+    <StreamSession apiKey={apiKey} apiUrl={effectiveApiUrl!} assistantId={finalAssistantId!}>
       {children}
     </StreamSession>
   );

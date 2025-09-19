@@ -3,10 +3,13 @@ import { ReactNode, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useStreamContext } from "@/providers/Stream";
-import { useState, FormEvent } from "react";
+import { useState, FormEvent, useMemo } from "react";
+import { useSession } from "next-auth/react";
 import { Button } from "../ui/button";
 import { Checkpoint, Message } from "@langchain/langgraph-sdk";
 import { AssistantMessage, AssistantMessageLoading } from "./messages/ai";
+import { getContentString } from "./utils";
+// (dedupe/ordering is handled inline; no external merge util is used)
 import { HumanMessage } from "./messages/human";
 import {
   DO_NOT_RENDER_ID_PREFIX,
@@ -113,6 +116,17 @@ function OpenGitHubRepo() {
 }
 
 export function Thread() {
+  const { data: session } = useSession();
+  const sessionTenantId = (session as any)?.tenantId as string | undefined;
+  const tenantId = useMemo(() => {
+    try {
+      if (typeof window !== "undefined") {
+        const v = window.localStorage.getItem("lg:chat:tenantId");
+        if (v) return v;
+      }
+    } catch {}
+    return sessionTenantId;
+  }, [sessionTenantId]);
   const [artifactContext, setArtifactContext] = useArtifactContext();
   const [artifactOpen, closeArtifact] = useArtifactOpen();
 
@@ -142,6 +156,8 @@ export function Thread() {
   const stream = useStreamContext();
   const messages = stream.messages;
   const isLoading = stream.isLoading;
+  const streamClient: any = (stream as any)?.client;
+  const assistantIdFromStream: string | undefined = (stream as any)?.assistantId;
 
   const lastError = useRef<string | undefined>(undefined);
 
@@ -151,6 +167,27 @@ export function Thread() {
     // close artifact and reset artifact context
     closeArtifact();
     setArtifactContext({});
+  };
+
+  // Create a tenant-scoped thread when starting a new one to ensure proper metadata and isolation
+  const ensureTenantThread = async () => {
+    if (threadId) return threadId;
+    const tenant = tenantId || undefined;
+    try {
+      if (streamClient && assistantIdFromStream) {
+        const t = await streamClient.threads.create({
+          metadata: {
+            ...(tenant ? { tenant_id: tenant } : {}),
+          },
+          graphId: assistantIdFromStream,
+        });
+        setThreadId(t.thread_id);
+        return t.thread_id as string;
+      }
+    } catch (e) {
+      // ignore and let useStream create one if needed
+    }
+    return null;
   };
 
   useEffect(() => {
@@ -195,7 +232,7 @@ export function Thread() {
     prevMessageLength.current = messages.length;
   }, [messages]);
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if ((input.trim().length === 0 && contentBlocks.length === 0) || isLoading)
       return;
@@ -212,11 +249,18 @@ export function Thread() {
 
     const toolMessages = ensureToolCallsHaveResponses(stream.messages);
 
-    const context =
-      Object.keys(artifactContext).length > 0 ? artifactContext : undefined;
+    const baseCtx = Object.keys(artifactContext).length > 0 ? artifactContext : undefined;
+    const context = { ...(baseCtx || {}), ...(tenantId ? { tenant_id: tenantId } : {}) } as any;
 
+    // Ensure a tenant-scoped thread exists before first submit
+    const ensuredId = await ensureTenantThread();
+    if (ensuredId) {
+      // Give useStream a moment to observe the new threadId to avoid auto-creating another one
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    // Send only the new human message to the server; keep tool responses client-side for UI stability
     stream.submit(
-      { messages: [...toolMessages, newHumanMessage], context },
+      { messages: newHumanMessage, context },
       {
         streamMode: ["values"],
         optimisticValues: (prev) => ({
@@ -396,24 +440,63 @@ export function Thread() {
               contentClassName="pt-8 pb-16  max-w-3xl mx-auto flex flex-col gap-4 w-full"
               content={
                 <>
-                  {messages
-                    .filter((m) => !m.id?.startsWith(DO_NOT_RENDER_ID_PREFIX))
-                    .map((message, index) =>
-                      message.type === "human" ? (
-                        <HumanMessage
-                          key={message.id || `${message.type}-${index}`}
-                          message={message}
-                          isLoading={isLoading}
-                        />
+                  {(() => {
+                    // 1) Keep only conversation roles (system | user | assistant); drop tool messages
+                    const allowedTypes = new Set(["human", "ai", "system"]);
+                    const enriched = messages
+                      .filter((m) => !m.id?.startsWith(DO_NOT_RENDER_ID_PREFIX))
+                      .filter((m) => allowedTypes.has(m.type as string))
+                      .map((m, i) => ({ m, i, meta: stream.getMessagesMetadata(m, i) }));
+                    const parseTs = (s?: string | null) => {
+                      if (!s) return NaN;
+                      const t = Date.parse(s);
+                      return Number.isNaN(t) ? NaN : t;
+                    };
+                    // 2) Sort: persisted first strictly by timestamp asc; optimistics (no ts) come last by insertion order
+                    enriched.sort((a, b) => {
+                      const ta = parseTs(a.meta?.firstSeenState?.created_at as any);
+                      const tb = parseTs(b.meta?.firstSeenState?.created_at as any);
+                      const aMissing = Number.isNaN(ta);
+                      const bMissing = Number.isNaN(tb);
+                      if (aMissing && bMissing) return a.i - b.i;
+                      if (aMissing) return 1;  // optimistic (no ts) after persisted
+                      if (bMissing) return -1;
+                      if (ta === tb) return a.i - b.i;
+                      return ta - tb;
+                    });
+                    // 3) Deduplicate by messageId (preferred), else by role+text
+                    const seenIds = new Set<string>();
+                    const seenRoleText = new Set<string>();
+                    const roleOf = (t: string) => (t === "human" ? "user" : t === "ai" ? "assistant" : t);
+                    const finalList = [] as typeof enriched;
+                    for (const item of enriched) {
+                      const { m, meta } = item;
+                      const contentText = getContentString((m as any).content ?? "");
+                      const rtKey = `${roleOf(m.type)}|${contentText}`;
+                      if (seenRoleText.has(rtKey)) continue;
+                      const msgId = (meta?.messageId as string | undefined) || (m.id as string | undefined) || undefined;
+                      if (msgId) {
+                        const key = `id:${msgId}`;
+                        if (seenIds.has(key)) continue;
+                        seenIds.add(key);
+                      }
+                      seenRoleText.add(rtKey);
+                      finalList.push(item);
+                    }
+                    // 4) Render final merged conversation
+                    return finalList.map(({ m, i }) =>
+                      m.type === "human" ? (
+                        <HumanMessage key={m.id || `${m.type}-${i}`} message={m} isLoading={isLoading} />
                       ) : (
                         <AssistantMessage
-                          key={message.id || `${message.type}-${index}`}
-                          message={message}
+                          key={m.id || `${m.type}-${i}`}
+                          message={m}
                           isLoading={isLoading}
                           handleRegenerate={handleRegenerate}
                         />
                       ),
-                    )}
+                    );
+                  })()}
                   {/* Special rendering case where there are no AI/tool messages, but there is an interrupt.
                     We need to render it outside of the messages list, since there are no messages to render */}
                   {hasNoAIOrToolMessages && !!stream.interrupt && (
