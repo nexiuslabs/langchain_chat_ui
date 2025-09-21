@@ -21,9 +21,10 @@ export function useAuthFetch() {
   return async function authFetch(input: RequestInfo | URL, init: RequestInit = {}) {
     const headers = new Headers(init.headers || {});
     const tid = tenantOverride();
-    // Only allow Authorization header in development when explicitly enabled
-    const allowAuthHeader = process.env.NODE_ENV !== "production" && (process.env.NEXT_PUBLIC_USE_AUTH_HEADER || "").toLowerCase() === "true";
-    if (allowAuthHeader && idToken) headers.set("Authorization", `Bearer ${idToken}`);
+    // Always include Authorization header when an idToken is available.
+    // This improves cross-origin compatibility for protected exports (CSV/JSON)
+    // and avoids reliance on cookie refresh endpoints.
+    if (idToken) headers.set("Authorization", `Bearer ${idToken}`);
     if (tid) headers.set("X-Tenant-ID", tid);
     // Compute request URL and bases
     let target: RequestInfo | URL = input;
@@ -49,8 +50,9 @@ export function useAuthFetch() {
     let res = await doFetch();
     if (res.status !== 401) return res;
     // Attempt silent cookie refresh once (backend), then retry the original request
-    const useAuthHeader = (process.env.NEXT_PUBLIC_USE_AUTH_HEADER || '').toLowerCase() === 'true';
-    if (!didRefresh && !useAuthHeader) {
+    // If Authorization header is already present, refresh is likely unnecessary;
+    // still try once to be resilient in mixed cookie/header setups.
+    if (!didRefresh) {
       try {
         // Prefer backend base for refresh if configured, otherwise fall back to request's base
         const refreshBase = (process.env.NEXT_PUBLIC_API_BASE || '') || (targetBase || apiUrlEnv || "");
@@ -64,7 +66,7 @@ export function useAuthFetch() {
       } catch {}
     }
     // Fall back to interactive flows
-    if (process.env.NODE_ENV === 'production' || !useAuthHeader) {
+    if (process.env.NODE_ENV === 'production') {
       if (typeof window !== 'undefined') window.location.href = "/login";
     } else {
       void signIn(undefined, { callbackUrl: "/" });
