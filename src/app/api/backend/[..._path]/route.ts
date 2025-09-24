@@ -27,6 +27,14 @@ async function forward(method: string, request: Request, segments: string[]) {
   if (apiKey) headers.set("x-api-key", apiKey);
 
   const init: RequestInit = { method, headers };
+  // Extend backend timeout to tolerate long-running streams
+  const timeoutMs = Number(process.env.NEXT_BACKEND_TIMEOUT_MS || 600000); // 10 minutes
+  try {
+    // AbortSignal.timeout is available in modern Node runtimes
+    (init as any).signal = (AbortSignal as any).timeout(timeoutMs);
+  } catch (_) {
+    // Ignore if not available; default runtime limits apply
+  }
   if (method !== "GET" && method !== "HEAD") {
     const bodyText = await request.text();
     init.body = bodyText;
