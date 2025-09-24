@@ -63,7 +63,15 @@ export default function HeaderBar() {
         const em = j?.email || j?.user?.email;
         const tid = j?.tenant_id ?? (j?.odoo?.tenant_id ?? null);
         if (em) setEmailOverride(String(em));
-        if (tid != null) setTenantIdOverride(String(tid));
+        if (tid != null) {
+          const tidStr = String(tid);
+          setTenantIdOverride(tidStr);
+          try {
+            if (typeof window !== 'undefined' && !window.localStorage.getItem('lg:chat:tenantId')) {
+              window.localStorage.setItem('lg:chat:tenantId', tidStr);
+            }
+          } catch {}
+        }
       } catch {}
     })();
     return () => {
@@ -236,6 +244,9 @@ export default function HeaderBar() {
           )}
         </div>
         <div className="flex items-center gap-3">
+          <a href="/" className="text-sm px-2 py-1 border rounded" title="Back to Chat">Chat</a>
+          <a href="/candidates" className="text-sm px-2 py-1 border rounded" title="View latest candidates">Candidates</a>
+          <a href="/metrics" className="text-sm px-2 py-1 border rounded" title="View metrics dashboard">Metrics</a>
           <ConnectionBadge />
           <ShortlistStatusBadge />
           <ExportButtons />
