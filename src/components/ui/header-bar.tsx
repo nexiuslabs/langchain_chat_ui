@@ -38,7 +38,7 @@ export default function HeaderBar() {
           setOverride(v);
           setHasOverride(true);
         }
-      } catch {}
+      } catch (e) { void e; }
     }
   }, []);
 
@@ -70,9 +70,9 @@ export default function HeaderBar() {
             if (typeof window !== 'undefined' && !window.localStorage.getItem('lg:chat:tenantId')) {
               window.localStorage.setItem('lg:chat:tenantId', tidStr);
             }
-          } catch {}
+          } catch (e) { void e; }
         }
-      } catch {}
+      } catch (e) { void e; }
     })();
     return () => {
       cancelled = true;
@@ -124,7 +124,6 @@ export default function HeaderBar() {
     const [err, setErr] = useState<string | null>(null);
     useEffect(() => {
       let cancelled = false;
-      let iv: any;
       async function poll() {
         try {
           const res = await authFetch(`${apiBase}/shortlist/status`);
@@ -136,8 +135,8 @@ export default function HeaderBar() {
         }
       }
       void poll();
-      iv = setInterval(poll, 30000);
-      return () => { cancelled = true; if (iv) clearInterval(iv); };
+      const id = setInterval(poll, 30000);
+      return () => { cancelled = true; clearInterval(id); };
     }, [apiBase, authFetch]);
     if (!data) return null;
     const ts = data.last_refreshed_at ? new Date(data.last_refreshed_at) : null;
@@ -177,13 +176,13 @@ export default function HeaderBar() {
         window.localStorage.setItem("lg:chat:tenantId", override);
         window.location.reload();
       }
-    } catch {}
+    } catch (e) { void e; }
   };
   const clearOverride = () => {
     try {
       window.localStorage.removeItem("lg:chat:tenantId");
       window.location.reload();
-    } catch {}
+    } catch (e) { void e; }
   };
 
   const verifyOdoo = async () => {
@@ -206,8 +205,8 @@ export default function HeaderBar() {
     try {
       // Clear NextAuth session cookie without redirecting yet
       await signOut({ redirect: false });
-    } catch {}
-    try { if (typeof window !== 'undefined') window.localStorage.removeItem('lg:chat:tenantId'); } catch {}
+    } catch (e) { void e; }
+    try { if (typeof window !== 'undefined') window.localStorage.removeItem('lg:chat:tenantId'); } catch (e) { void e; }
     try {
       const issuer = issuerFromSession || process.env.NEXT_PUBLIC_NEXIUS_ISSUER || "";
       const base = issuer.replace(/\/+$/, "");
@@ -225,7 +224,7 @@ export default function HeaderBar() {
         window.location.href = logoutUrl;
         return;
       }
-    } catch {}
+    } catch (e) { void e; }
     // Fallback: go to our custom login page
     window.location.href = "/login";
   };

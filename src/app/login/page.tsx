@@ -22,9 +22,9 @@ export default function LoginPage() {
         const body = await res.json();
         const tid = body?.tenant_id || null;
         if (tid && typeof window !== 'undefined') {
-          try { window.localStorage.setItem('lg:chat:tenantId', String(tid)); } catch {}
+          try { window.localStorage.setItem('lg:chat:tenantId', String(tid)); } catch (e) { void e; }
         }
-      } catch {}
+      } catch (e) { void e; }
       window.location.href = "/";
     } else {
       const body = await res.json().catch(() => ({} as any));

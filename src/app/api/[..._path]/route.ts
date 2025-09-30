@@ -48,21 +48,21 @@ async function forward(method: string, request: Request, params: Promise<Params>
   });
 }
 
-export async function GET(request: Request, { params }: { params: Promise<Params> | Params }) {
-  return forward("GET", request, params);
+export async function GET(request: Request, ctx: any) {
+  return forward("GET", request, ctx?.params);
 }
-export async function POST(request: Request, { params }: { params: Promise<Params> | Params }) {
-  return forward("POST", request, params);
+export async function POST(request: Request, ctx: any) {
+  return forward("POST", request, ctx?.params);
 }
-export async function PUT(request: Request, { params }: { params: Promise<Params> | Params }) {
-  return forward("PUT", request, params);
+export async function PUT(request: Request, ctx: any) {
+  return forward("PUT", request, ctx?.params);
 }
-export async function PATCH(request: Request, { params }: { params: Promise<Params> | Params }) {
-  return forward("PATCH", request, params);
+export async function PATCH(request: Request, ctx: any) {
+  return forward("PATCH", request, ctx?.params);
 }
-export async function DELETE(request: Request, { params }: { params: Promise<Params> | Params }) {
-  return forward("DELETE", request, params);
+export async function DELETE(request: Request, ctx: any) {
+  return forward("DELETE", request, ctx?.params);
 }
-export async function OPTIONS(request: Request, { params }: { params: Promise<Params> | Params }) {
-  return forward("OPTIONS", request, params);
+export async function OPTIONS(request: Request, ctx: any) {
+  return forward("OPTIONS", request, ctx?.params);
 }

@@ -63,7 +63,7 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
         const v = window.localStorage.getItem('lg:chat:tenantId');
         if (v) return v;
       }
-    } catch {}
+    } catch (e) { void e; }
     return sessionTenantId;
   })();
 
