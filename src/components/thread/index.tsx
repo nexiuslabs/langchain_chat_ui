@@ -151,6 +151,8 @@ export function Thread() {
     handlePaste,
   } = useFileUpload();
   const [firstTokenReceived, setFirstTokenReceived] = useState(false);
+  const ttfbStartRef = useRef<number | null>(null);
+  const ttfbSentRef = useRef<boolean>(false);
   const isLargeScreen = useMediaQuery("(min-width: 1024px)");
 
   const stream = useStreamContext();
@@ -227,6 +229,21 @@ export function Thread() {
       messages[messages.length - 1].type === "ai"
     ) {
       setFirstTokenReceived(true);
+      try {
+        if (!ttfbSentRef.current && ttfbStartRef.current != null) {
+          const end = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+          const ttfbMs = Math.max(0, Math.round(end - ttfbStartRef.current));
+          ttfbSentRef.current = true;
+          const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || '').toLowerCase() === 'true';
+          const base = useProxy ? '/api/backend' : (process.env.NEXT_PUBLIC_API_URL || '');
+          fetch(`${base}/metrics/ttfb`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ ttfb_ms: ttfbMs }),
+          }).catch(() => {});
+        }
+      } catch {}
     }
 
     prevMessageLength.current = messages.length;
@@ -237,6 +254,8 @@ export function Thread() {
     if ((input.trim().length === 0 && contentBlocks.length === 0) || isLoading)
       return;
     setFirstTokenReceived(false);
+    ttfbSentRef.current = false;
+    ttfbStartRef.current = (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
     const newHumanMessage: Message = {
       id: uuidv4(),
