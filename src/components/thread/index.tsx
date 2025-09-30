@@ -124,7 +124,7 @@ export function Thread() {
         const v = window.localStorage.getItem("lg:chat:tenantId");
         if (v) return v;
       }
-    } catch {}
+    } catch (e) { void e; }
     return sessionTenantId;
   }, [sessionTenantId]);
   const [artifactContext, setArtifactContext] = useArtifactContext();
@@ -187,7 +187,7 @@ export function Thread() {
         return t.thread_id as string;
       }
     } catch (e) {
-      // ignore and let useStream create one if needed
+      void e; // ignore and let useStream create one if needed
     }
     return null;
   };
@@ -215,8 +215,8 @@ export function Thread() {
         richColors: true,
         closeButton: true,
       });
-    } catch {
-      // no-op
+    } catch (e) {
+      void e;
     }
   }, [stream.error]);
 
@@ -241,9 +241,9 @@ export function Thread() {
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
             body: JSON.stringify({ ttfb_ms: ttfbMs }),
-          }).catch(() => {});
+          }).catch(() => undefined);
         }
-      } catch {}
+      } catch (e) { void e; }
     }
 
     prevMessageLength.current = messages.length;

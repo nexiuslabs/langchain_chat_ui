@@ -32,7 +32,7 @@ export default function DemoPage(): React.ReactNode {
           });
           if (res.ok) exchangedRef.current = true;
         }
-      } catch {}
+      } catch (e) { void e; }
     }
     run();
   }, [session, status]);

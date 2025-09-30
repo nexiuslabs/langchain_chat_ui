@@ -78,7 +78,6 @@ async function buildProviders() {
 const handler = NextAuth({
   providers: await buildProviders(),
   session: { strategy: "jwt" },
-  trustHost: true,
   // Route all sign-in/out flows through our custom login page
   pages: {
     signIn: "/login",

@@ -90,7 +90,7 @@ async function checkGraphStatus(
       const r2 = await fetch(altUrl, { credentials: "include", headers });
       if (r2.ok) return true;
       if ([401, 403, 404, 405].includes(r2.status)) return true;
-    } catch {}
+    } catch (e) { void e; }
     return false;
   } catch (e) {
     console.error(e);
@@ -121,7 +121,7 @@ const StreamSession = ({
     try {
       const v = window.localStorage.getItem('lg:chat:tenantId');
       if (v) setTenantOverride(v);
-    } catch {}
+    } catch (e) { void e; }
   }, []);
   const effectiveTenantId = tenantOverride || sessionTenantId;
   const [threadId, setThreadId] = useQueryState("threadId");
@@ -146,8 +146,8 @@ const StreamSession = ({
           setThreadId(t.thread_id);
           precreatedRef.current = true;
         })
-        .catch(() => {});
-    } catch {}
+        .catch((e) => { void e; });
+    } catch (e) { void e; }
   }, [assistantId, effectiveTenantId, apiUrl, apiKey, idToken, threadId, setThreadId]);
   const streamValue = useTypedStream({
     apiUrl,
@@ -157,13 +157,6 @@ const StreamSession = ({
     defaultHeaders: {
       ...(effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : {}),
       ...(process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_USE_AUTH_HEADER === 'true' && idToken ? { Authorization: `Bearer ${idToken}` } : {}),
-    },
-    fetchOptions: {
-      credentials: "include",
-      headers: {
-        ...(effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : {}),
-        ...(process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_USE_AUTH_HEADER === 'true' && idToken ? { Authorization: `Bearer ${idToken}` } : {}),
-      },
     },
     onCustomEvent: (event, options) => {
       if (isUIMessage(event) || isRemoveUIMessage(event)) {
@@ -178,7 +171,7 @@ const StreamSession = ({
       // Optimistically add the new thread to history so the sidebar updates immediately
       try {
         setThreads((existing) => mergeThreadLists(existing, [{ thread_id: id } as any]));
-      } catch {}
+      } catch (e) { void e; }
       // Ensure thread carries tenant metadata even if auto-created by the SDK
       (async () => {
         try {
@@ -196,7 +189,7 @@ const StreamSession = ({
             body: JSON.stringify({ metadata: { tenant_id: effectiveTenantId } }),
           });
           // ignore non-2xx; it's a best-effort
-        } catch {}
+        } catch (e) { void e; }
       })();
       // Refetch threads list when thread ID changes.
       // Wait for some seconds before fetching so we're able to get the new thread that was created.
@@ -216,7 +209,7 @@ const StreamSession = ({
       try {
         const key = `lg:chat:connToast:${apiUrl}`;
         toastShownRef.current = window.sessionStorage.getItem(key) === '1';
-      } catch {}
+      } catch (e) { void e; }
     }
 
     if (checkingRef.current) return;
@@ -239,12 +232,12 @@ const StreamSession = ({
             closeButton: true,
           });
           toastShownRef.current = true;
-          if (typeof window !== 'undefined') {
-            try {
-              const key = `lg:chat:connToast:${apiUrl}`;
-              window.sessionStorage.setItem(key, '1');
-            } catch {}
-          }
+      if (typeof window !== 'undefined') {
+        try {
+          const key = `lg:chat:connToast:${apiUrl}`;
+          window.sessionStorage.setItem(key, '1');
+        } catch (e) { void e; }
+      }
         }
       })
       .finally(() => {

@@ -13,7 +13,8 @@ export function useAuthFetch() {
     try {
       const v = typeof window !== 'undefined' ? window.localStorage.getItem("lg:chat:tenantId") : null;
       return v || sessionTenantId;
-    } catch {
+    } catch (e) {
+      void e;
       return sessionTenantId;
     }
   }
@@ -44,7 +45,7 @@ export function useAuthFetch() {
         const u = new URL(urlStr);
         target = "/api/backend" + u.pathname + (u.search || "");
       }
-    } catch {}
+    } catch (e) { void e; }
 
     const doFetch = async () => fetch(target, { ...init, headers, credentials: "include" });
     let res = await doFetch();
@@ -63,7 +64,7 @@ export function useAuthFetch() {
           res = await doFetch();
           if (res.status !== 401) return res;
         }
-      } catch {}
+      } catch (e) { void e; }
     }
     // Fall back to interactive flows
     if (process.env.NODE_ENV === 'production') {

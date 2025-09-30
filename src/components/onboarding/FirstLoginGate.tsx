@@ -59,7 +59,7 @@ export function FirstLoginGate({ children }: { children: React.ReactNode }) {
                 return;
               }
             }
-          } catch {}
+          } catch (e) { void e; }
           // Secondary fast-pass: verify_odoo endpoint
           try {
             const r3 = await authFetch(`${apiBase}/onboarding/verify_odoo`);
@@ -70,7 +70,7 @@ export function FirstLoginGate({ children }: { children: React.ReactNode }) {
                 return;
               }
             }
-          } catch {}
+          } catch (e) { void e; }
         }
       } catch (e: any) {
         if (!cancelled) setState({ status: "error", error: String(e) });
@@ -88,7 +88,6 @@ export function FirstLoginGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    let iv: any;
 
     async function pollOnce() {
       try {
@@ -116,7 +115,7 @@ export function FirstLoginGate({ children }: { children: React.ReactNode }) {
                   return;
                 }
               }
-            } catch {}
+            } catch (e) { void e; }
           }
           setState({ status: st, error: body?.error });
         }
@@ -127,7 +126,7 @@ export function FirstLoginGate({ children }: { children: React.ReactNode }) {
 
     // immediate first poll then interval
     void pollOnce();
-    iv = setInterval(pollOnce, 2000);
+    const iv = setInterval(pollOnce, 2000);
 
     return () => {
       cancelled = true;
@@ -138,7 +137,6 @@ export function FirstLoginGate({ children }: { children: React.ReactNode }) {
   // Extra safety: on mount, try a quick Odoo readiness probe even before enabled flips
   useEffect(() => {
     let cancelled = false;
-    let iv: any;
     async function probe() {
       try {
         const r = await authFetch(`${apiBase}/session/odoo_info`);
@@ -147,12 +145,12 @@ export function FirstLoginGate({ children }: { children: React.ReactNode }) {
         if (!cancelled && j?.odoo?.ready) {
           setState({ status: "ready" });
         }
-      } catch {}
+      } catch (e) { void e; }
     }
     // Try once immediately, then every 2s for up to ~10s
     void probe();
     let count = 0;
-    iv = setInterval(() => {
+    const iv = setInterval(() => {
       if (count++ >= 5) {
         clearInterval(iv);
         return;
