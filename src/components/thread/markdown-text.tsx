@@ -245,7 +245,6 @@ const defaultComponents: any = {
     // Avoid passing empty string to img src to prevent browser refetch warning
     if (!src || src.trim() === "") return null;
     return (
-      // eslint-disable-next-line @next/next/no-img-element
       <img src={src} alt={alt || ""} loading="lazy" {...props} />
     );
   },
