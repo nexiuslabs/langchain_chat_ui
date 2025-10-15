@@ -9,6 +9,20 @@ export function useAuthFetch() {
   // Prevent infinite refresh loops on persistent 401s
   let didRefresh = false;
 
+  function hasCookie(name: string): boolean {
+    try {
+      if (typeof document === "undefined") return false;
+      const cookies = document.cookie ? document.cookie.split(";") : [];
+      const n = name + "=";
+      for (const c of cookies) {
+        if (c.trim().startsWith(n)) return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
   function tenantOverride(): string | undefined {
     try {
       const v = typeof window !== 'undefined' ? window.localStorage.getItem("lg:chat:tenantId") : null;
@@ -22,11 +36,6 @@ export function useAuthFetch() {
   return async function authFetch(input: RequestInfo | URL, init: RequestInit = {}) {
     const headers = new Headers(init.headers || {});
     const tid = tenantOverride();
-    // Always include Authorization header when an idToken is available.
-    // This improves cross-origin compatibility for protected exports (CSV/JSON)
-    // and avoids reliance on cookie refresh endpoints.
-    if (idToken) headers.set("Authorization", `Bearer ${idToken}`);
-    if (tid) headers.set("X-Tenant-ID", tid);
     // Compute request URL and bases
     let target: RequestInfo | URL = input;
     const urlStr = typeof input === 'string' ? input : (input as URL).toString();
@@ -38,6 +47,13 @@ export function useAuthFetch() {
       : '';
     const isLangGraph = targetBase && targetBase === apiUrlEnv;
     const isBackend = targetBase && targetBase === apiBaseEnv;
+    // Prefer cookie-mode auth for LangGraph to allow /auth/refresh to rotate cookies mid-stream
+    const hasAccessCookie = hasCookie(process.env.NEXT_PUBLIC_ACCESS_COOKIE_NAME || "nx_access");
+    // Include Authorization header unless we're calling LangGraph and already have an nx_access cookie
+    if (!(isLangGraph && hasAccessCookie) && idToken) {
+      headers.set("Authorization", `Bearer ${idToken}`);
+    }
+    if (tid) headers.set("X-Tenant-ID", tid);
     // Proxy to /api/backend ONLY for LangGraph calls when enabled
     try {
       const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";

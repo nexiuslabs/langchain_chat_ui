@@ -241,6 +241,13 @@ const defaultComponents: any = {
       </code>
     );
   },
+  img: ({ src, alt, ...props }: { src?: string; alt?: string }) => {
+    // Avoid passing empty string to img src to prevent browser refetch warning
+    if (!src || src.trim() === "") return null;
+    return (
+      <img src={src} alt={alt || ""} loading="lazy" {...props} />
+    );
+  },
 };
 
 const MarkdownTextImpl: FC<{ children: string }> = ({ children }) => {
