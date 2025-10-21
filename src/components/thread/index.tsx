@@ -529,6 +529,15 @@ export function Thread() {
                   {isLoading && !firstTokenReceived && (
                     <AssistantMessageLoading />
                   )}
+                  {/* Realtime progress from backend SSE */}
+                  <div className="mt-2">
+                    {(() => {
+                      try {
+                        const { ChatProgressFeed } = require("./ChatProgressFeed");
+                        return <ChatProgressFeed />;
+                      } catch (e) { return null; }
+                    })()}
+                  </div>
                 </>
               }
               footer={
