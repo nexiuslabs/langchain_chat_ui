@@ -51,7 +51,29 @@ async function forward(method: string, request: Request, segments: string[]) {
   }
   if (method !== "GET" && method !== "HEAD") {
     const bodyText = await request.text();
-    init.body = bodyText;
+    let finalBody = bodyText;
+    // Inject a session_id derived from thread_id for run-start APIs so backend can bind SSE
+    try {
+      // Expect segments like: ["threads", "<thread_id>", "runs", ("stream")?]
+      const isRunStart = segments.length >= 3 && segments[0] === "threads" && segments[2].startsWith("runs");
+      if (isRunStart && bodyText && bodyText.trim().startsWith("{")) {
+        const threadId = segments[1];
+        const payload: any = JSON.parse(bodyText);
+        const input = (payload?.input && typeof payload.input === "object") ? payload.input : (typeof payload === "object" ? payload : {});
+        // Place session_id in multiple places for maximum compatibility
+        input.session_id = input.session_id || threadId;
+        payload.input = input;
+        payload.session_id = payload.session_id || threadId;
+        payload.context = { ...(payload.context || {}), session_id: threadId };
+        finalBody = JSON.stringify(payload);
+        // Ensure JSON content-type
+        headers.set("content-type", "application/json");
+      }
+    } catch (e) {
+      // On any parsing error, fall back to original body
+      finalBody = bodyText;
+    }
+    init.body = finalBody;
     (init as any).duplex = "half";
   }
   const resp = await fetch(url, init);
