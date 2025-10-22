@@ -35,6 +35,7 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { Label } from "../ui/label";
 import { Switch } from "../ui/switch";
 import { GitHubSVG } from "../icons/github";
+import dynamic from "next/dynamic";
 import {
   Tooltip,
   TooltipContent,
@@ -49,6 +50,11 @@ import {
   ArtifactTitle,
   useArtifactContext,
 } from "./artifact";
+
+const ChatProgressFeed = dynamic(
+  () => import("./ChatProgressFeed").then((m) => m.ChatProgressFeed),
+  { ssr: false },
+);
 
 function StickyToBottomContent(props: {
   content: ReactNode;
@@ -531,12 +537,7 @@ export function Thread() {
                   )}
                   {/* Realtime progress from backend SSE */}
                   <div className="mt-2">
-                    {(() => {
-                      try {
-                        const { ChatProgressFeed } = require("./ChatProgressFeed");
-                        return <ChatProgressFeed />;
-                      } catch (e) { return null; }
-                    })()}
+                    <ChatProgressFeed />
                   </div>
                 </>
               }

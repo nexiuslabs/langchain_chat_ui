@@ -52,7 +52,7 @@ export function ChatProgressProvider({ children }: { children: React.ReactNode }
     // Start/stop EventSource on session change
     if (!sessionId) {
       if (esRef.current) {
-        try { esRef.current.close(); } catch {}
+        try { esRef.current.close(); } catch { void 0; }
         esRef.current = null;
       }
       return;
@@ -81,12 +81,14 @@ export function ChatProgressProvider({ children }: { children: React.ReactNode }
       ].forEach((label) => es.addEventListener(label, (e) => push(label, (e as MessageEvent).data)));
       es.onerror = () => {
         // Let browser auto-reconnect; optionally log a soft event
+        void 0;
       };
     } catch {
       // Silent fail; UI remains functional without stream
+      void 0;
     }
     return () => {
-      try { esRef.current?.close(); } catch {}
+      try { esRef.current?.close(); } catch { void 0; }
       esRef.current = null;
     };
   }, [sessionId]);
@@ -107,7 +109,7 @@ export function ChatProgressProvider({ children }: { children: React.ReactNode }
           setEvents((prev) => [...prev, { id: key, label: 'icp:profile_ready', message: 'ICP Profile produced.', ts: Date.now() }].slice(-200));
         }
       }
-      if (/Top[\-\s]?listed lookalikes/i.test(text) || /\|\s*Domain\s*\|/i.test(text)) {
+      if (/Top[-\s]?listed lookalikes/i.test(text) || /\|\s*Domain\s*\|/i.test(text)) {
         const key = `synthetic:icp:toplikes_ready:${idBase}`;
         if (!seenSynthetic.current.has(key)) {
           seenSynthetic.current.add(key);
@@ -116,6 +118,7 @@ export function ChatProgressProvider({ children }: { children: React.ReactNode }
       }
     } catch {
       // ignore
+      void 0;
     }
   }, [stream.messages]);
 
