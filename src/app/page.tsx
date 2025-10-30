@@ -7,7 +7,7 @@ import { ArtifactProvider } from "@/components/thread/artifact";
 import { ChatProgressProvider } from "@/providers/ChatProgress";
 import { Toaster } from "@/components/ui/sonner";
 import React, { useEffect, useRef } from "react";
-import HeaderBar from "@/components/ui/header-bar";
+import AppShell from "@/components/ui/app-shell";
 import { FirstLoginGate } from "@/components/onboarding/FirstLoginGate";
 import { useSession } from "next-auth/react";
 
@@ -39,7 +39,7 @@ export default function DemoPage(): React.ReactNode {
   }, [session, status]);
   return (
     <React.Suspense fallback={<div>Loading (layout)...</div>}>
-      <HeaderBar />
+      <AppShell />
       <Toaster />
       <FirstLoginGate>
         <ThreadProvider>

@@ -1,19 +1,20 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { Inter } from "next/font/google";
+import { Montserrat, Lato } from "next/font/google";
 import React from "react";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
 import AppProviders from "@/components/providers/app-providers";
 
-const inter = Inter({
-  subsets: ["latin"],
-  preload: true,
-  display: "swap",
-});
+const lato = Lato({ subsets: ["latin"], preload: true, display: "swap", weight: ["400", "700"] });
+const montserrat = Montserrat({ subsets: ["latin"], preload: true, display: "swap", weight: ["600", "700"] });
 
 export const metadata: Metadata = {
   title: "Agent Chat",
-  description: "Agent Chat UX by LangChain",
+  description: "Modern, branded agent chat UI",
+  openGraph: {
+    title: "Agent Chat",
+    description: "Modern, branded agent chat UI",
+  },
 };
 
 export default function RootLayout({
@@ -23,7 +24,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={inter.className}>
+      <body className={lato.className}>
         <NuqsAdapter>
           <AppProviders>{children}</AppProviders>
         </NuqsAdapter>
