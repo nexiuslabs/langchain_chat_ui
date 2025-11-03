@@ -1,5 +1,7 @@
 export const runtime = "nodejs";
 
+import { Agent, setGlobalDispatcher } from "undici";
+
 type Params = { _path: string[] };
 
 // Configure Undici dispatcher lazily to align timeouts with proxy timeout.
@@ -29,19 +31,21 @@ async function ensureUndiciConfigured() {
 
 function getDispatcher(): any | undefined {
   try {
-    if (!__GLOBAL_UNDICI__) return undefined;
-    const { Agent } = __GLOBAL_UNDICI__;
-    const headersTimeout = __GLOBAL_UNDICI__.headersTimeout as number;
-    const bodyTimeout = __GLOBAL_UNDICI__.bodyTimeout as number;
-    return new Agent({
+    const proxyMs = Number(process.env.NEXT_BACKEND_TIMEOUT_MS || 600000); // reuse same knob
+    const cushion = 120000; // +2 minutes
+    const headersTimeout = Number(process.env.NEXT_HEADERS_TIMEOUT_MS ?? (proxyMs + cushion));
+    const bodyTimeout = Number(process.env.NEXT_BODY_TIMEOUT_MS ?? (proxyMs + cushion));
+    setGlobalDispatcher(new Agent({
       connect: { timeout: 60000 },
       headersTimeout,
       bodyTimeout,
       connections: Number(process.env.NEXT_BACKEND_CONNECTIONS || 16),
       pipelining: 0,
-    });
-  } catch { return undefined; }
-}
+    }));
+  } catch {
+    // ignore if undici not available
+  }
+})();
 
 async function targetUrl(req: Request, params: Promise<Params> | Params): Promise<string> {
   const { _path } = await params;
@@ -80,13 +84,9 @@ async function forward(method: string, request: Request, params: Promise<Params>
   const timeoutMs = Number(process.env.NEXT_BACKEND_TIMEOUT_MS || 600000); // 10 minutes default
   try {
     (init as any).signal = (AbortSignal as any).timeout(timeoutMs);
-  } catch (e) {
-    void e;
+  } catch {
+    /* ignore */
   }
-  try {
-    const d = getDispatcher();
-    if (d) (init as any).dispatcher = d;
-  } catch { /* ignore */ }
   if (method !== "GET" && method !== "HEAD") {
     // Read fully to avoid body locking issues on edge runtime
     const bodyText = await request.text();
