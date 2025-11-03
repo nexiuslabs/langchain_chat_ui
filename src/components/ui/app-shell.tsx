@@ -115,9 +115,9 @@ function TenantOverride({ enabled, apiBase, authFetch }: { enabled: boolean; api
       <Label htmlFor="tenantOverride">Tenant override</Label>
       <div className="flex gap-2 items-end">
         <Input id="tenantOverride" className="flex-1" placeholder="tenant override" value={override} onChange={(e) => setOverride(e.target.value)} />
-        <Button variant="secondary" onClick={() => { try { window.localStorage.setItem("lg:chat:tenantId", override); window.location.reload(); } catch {} }}>Use</Button>
+        <Button variant="secondary" onClick={() => { try { window.localStorage.setItem("lg:chat:tenantId", override); window.location.reload(); } catch { /* ignore */ } }}>Use</Button>
         {hasOverride && (
-          <Button variant="destructive" onClick={() => { try { window.localStorage.removeItem("lg:chat:tenantId"); window.location.reload(); } catch {} }}>Clear</Button>
+          <Button variant="destructive" onClick={() => { try { window.localStorage.removeItem("lg:chat:tenantId"); window.location.reload(); } catch { /* ignore */ } }}>Clear</Button>
         )}
       </div>
       <p className="text-xs text-muted-foreground">Overrides current tenant for thread-scoped operations.</p>
@@ -146,8 +146,8 @@ export function AppShell(): React.ReactNode {
   const clientIdFromSession = (session as any)?.clientId as string | undefined;
 
   const globalSignOut = async () => {
-    try { await signOut({ redirect: false }); } catch {}
-    try { if (typeof window !== 'undefined') window.localStorage.removeItem('lg:chat:tenantId'); } catch {}
+    try { await signOut({ redirect: false }); } catch { /* ignore */ }
+    try { if (typeof window !== 'undefined') window.localStorage.removeItem('lg:chat:tenantId'); } catch { /* ignore */ }
     try {
       const issuer = issuerFromSession || process.env.NEXT_PUBLIC_NEXIUS_ISSUER || "";
       const base = issuer.replace(/\/+$/, "");
@@ -159,7 +159,7 @@ export function AppShell(): React.ReactNode {
       if (clientId) qp.set("client_id", clientId);
       const logoutUrl = `${base}/protocol/openid-connect/logout?${qp.toString()}`;
       if (logoutUrl.startsWith("http")) { window.location.href = logoutUrl; return; }
-    } catch {}
+    } catch { /* ignore */ }
     window.location.href = "/login";
   };
 

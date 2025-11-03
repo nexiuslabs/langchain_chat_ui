@@ -1,47 +1,27 @@
 export const runtime = "nodejs";
 
+import { Agent, setGlobalDispatcher } from "undici";
+
 // Ensure Node/Undici doesn't kill long-running streams around 5 minutes.
 // We align Undici's internal timeouts with our proxy timeout so AbortSignal governs.
 // Note: only effective in nodejs runtime (not edge).
-let __GLOBAL_UNDICI__: any = null;
-try {
-  // Undici is the fetch implementation in Node 18+/Next.js node runtime
-  // headersTimeout/bodyTimeout are in milliseconds
-  // If envs are not provided, fall back to a generous default (65 minutes)
-  // or to NEXT_BACKEND_TIMEOUT_MS + small cushion when available.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { Agent, setGlobalDispatcher } = require("undici");
-  const proxyMs = Number(process.env.NEXT_BACKEND_TIMEOUT_MS || 600000); // 10m default
-  const cushion = 120000; // +2m cushion to avoid racing the AbortSignal
-  const headersTimeout = Number(process.env.NEXT_HEADERS_TIMEOUT_MS || (proxyMs + cushion) || 3900000);
-  const bodyTimeout = Number(process.env.NEXT_BODY_TIMEOUT_MS || (proxyMs + cushion) || 3900000);
-  __GLOBAL_UNDICI__ = { Agent, setGlobalDispatcher, headersTimeout, bodyTimeout };
-  setGlobalDispatcher(new Agent({
-    connect: { timeout: 60000 }, // 60s connect timeout
-    headersTimeout,
-    bodyTimeout,
-    connections: Number(process.env.NEXT_BACKEND_CONNECTIONS || 16),
-    pipelining: 0,
-  }));
-} catch (_e) {
-  // Best-effort; if undici is not available or already configured, ignore.
-}
-
-function getDispatcher(): any | undefined {
+(() => {
   try {
-    if (!__GLOBAL_UNDICI__) return undefined;
-    const { Agent } = __GLOBAL_UNDICI__;
-    const headersTimeout = __GLOBAL_UNDICI__.headersTimeout as number;
-    const bodyTimeout = __GLOBAL_UNDICI__.bodyTimeout as number;
-    return new Agent({
-      connect: { timeout: 60000 },
+    const proxyMs = Number(process.env.NEXT_BACKEND_TIMEOUT_MS || 600000); // 10m default
+    const cushion = 120000; // +2m cushion to avoid racing the AbortSignal
+    const headersTimeout = Number(process.env.NEXT_HEADERS_TIMEOUT_MS ?? (proxyMs + cushion));
+    const bodyTimeout = Number(process.env.NEXT_BODY_TIMEOUT_MS ?? (proxyMs + cushion));
+    setGlobalDispatcher(new Agent({
+      connect: { timeout: 60000 }, // 60s connect timeout
       headersTimeout,
       bodyTimeout,
       connections: Number(process.env.NEXT_BACKEND_CONNECTIONS || 16),
       pipelining: 0,
-    });
-  } catch { return undefined; }
-}
+    }));
+  } catch {
+    // ignore; defaults will apply
+  }
+})();
 
 type Params = { _path: string[] };
 
@@ -89,14 +69,9 @@ async function forward(method: string, request: Request, segments: string[]) {
   try {
     // AbortSignal.timeout is available in modern Node runtimes
     (init as any).signal = (AbortSignal as any).timeout(timeoutMs);
-  } catch (e) {
-    void e; // Ignore if not available; default runtime limits apply
+  } catch {
+    /* ignore: default runtime limits apply */
   }
-  // Ensure requests use a dispatcher with ample timeouts and multiple connections
-  try {
-    const d = getDispatcher();
-    if (d) (init as any).dispatcher = d;
-  } catch { /* ignore */ }
   if (method !== "GET" && method !== "HEAD") {
     const bodyText = await request.text();
     let finalBody = bodyText;
@@ -124,17 +99,6 @@ async function forward(method: string, request: Request, segments: string[]) {
     init.body = finalBody;
     (init as any).duplex = "half";
   }
-  // Use undici fetch with dispatcher when available to avoid Next's internal fetch limits
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const undici = require("undici");
-    const undiciFetch = (undici && undici.fetch) ? undici.fetch : null;
-    const dispatcher = getDispatcher();
-    if (undiciFetch && dispatcher) {
-      const resp = await undiciFetch(url, { ...(init as any), dispatcher });
-      return new Response(resp.body as any, { status: resp.status, headers: resp.headers as any });
-    }
-  } catch (_e) { /* fall back to global fetch */ }
   const resp = await fetch(url, init);
   return new Response(resp.body, { status: resp.status, headers: resp.headers });
 }
