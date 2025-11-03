@@ -2,26 +2,29 @@ export const runtime = "nodejs";
 
 type Params = { _path: string[] };
 
-// Align Undici internal timeouts with our desired proxy timeout so we don't hit
-// 5-minute defaults (UND_ERR_HEADERS_TIMEOUT/UND_ERR_BODY_TIMEOUT) during long streams.
+// Configure Undici dispatcher lazily to align timeouts with proxy timeout.
 let __GLOBAL_UNDICI__: any = null;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { Agent, setGlobalDispatcher } = require("undici");
-  const proxyMs = Number(process.env.NEXT_BACKEND_TIMEOUT_MS || 600000); // reuse same knob
-  const cushion = 120000; // +2 minutes
-  const headersTimeout = Number(process.env.NEXT_HEADERS_TIMEOUT_MS || (proxyMs + cushion) || 3900000);
-  const bodyTimeout = Number(process.env.NEXT_BODY_TIMEOUT_MS || (proxyMs + cushion) || 3900000);
-  __GLOBAL_UNDICI__ = { Agent, setGlobalDispatcher, headersTimeout, bodyTimeout };
-  setGlobalDispatcher(new Agent({
-    connect: { timeout: 60000 },
-    headersTimeout,
-    bodyTimeout,
-    connections: Number(process.env.NEXT_BACKEND_CONNECTIONS || 16),
-    pipelining: 0,
-  }));
-} catch (_e) {
-  // ignore if undici not available or already configured
+let __UNDICI_READY = false;
+async function ensureUndiciConfigured() {
+  if (__UNDICI_READY) return;
+  try {
+    const { Agent, setGlobalDispatcher, fetch: undiciFetch } = await import("undici");
+    const proxyMs = Number(process.env.NEXT_BACKEND_TIMEOUT_MS || 600000);
+    const cushion = 120000; // +2 minutes
+    const headersTimeout = Number(process.env.NEXT_HEADERS_TIMEOUT_MS || (proxyMs + cushion) || 3900000);
+    const bodyTimeout = Number(process.env.NEXT_BODY_TIMEOUT_MS || (proxyMs + cushion) || 3900000);
+    __GLOBAL_UNDICI__ = { Agent, setGlobalDispatcher, headersTimeout, bodyTimeout, undiciFetch };
+    setGlobalDispatcher(new Agent({
+      connect: { timeout: 60000 },
+      headersTimeout,
+      bodyTimeout,
+      connections: Number(process.env.NEXT_BACKEND_CONNECTIONS || 16),
+      pipelining: 0,
+    }));
+    __UNDICI_READY = true;
+  } catch {
+    // ignore if undici not available or already configured
+  }
 }
 
 function getDispatcher(): any | undefined {
@@ -55,6 +58,7 @@ async function targetUrl(req: Request, params: Promise<Params> | Params): Promis
 }
 
 async function forward(method: string, request: Request, params: Promise<Params> | Params) {
+  await ensureUndiciConfigured();
   const url = await targetUrl(request, params);
   const headers = new Headers();
   // Forward selected headers from client
@@ -91,9 +95,7 @@ async function forward(method: string, request: Request, params: Promise<Params>
   }
   // Prefer undici.fetch with dispatcher when present to enforce our timeouts/connections
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const undici = require("undici");
-    const undiciFetch = (undici && undici.fetch) ? undici.fetch : null;
+    const undiciFetch = __GLOBAL_UNDICI__?.undiciFetch as any;
     const dispatcher = getDispatcher();
     if (undiciFetch && dispatcher) {
       const resp = await undiciFetch(url, { ...(init as any), dispatcher });
@@ -102,7 +104,9 @@ async function forward(method: string, request: Request, params: Promise<Params>
         headers: resp.headers as any,
       });
     }
-  } catch (_e) { /* fallback to global fetch */ }
+  } catch {
+    /* fallback to global fetch */
+  }
   const resp = await fetch(url, init);
   // Stream response back
   return new Response(resp.body, {

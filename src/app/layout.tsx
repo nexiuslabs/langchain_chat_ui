@@ -1,12 +1,11 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { Montserrat, Lato } from "next/font/google";
+import { Lato } from "next/font/google";
 import React from "react";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
 import AppProviders from "@/components/providers/app-providers";
 
 const lato = Lato({ subsets: ["latin"], preload: true, display: "swap", weight: ["400", "700"] });
-const montserrat = Montserrat({ subsets: ["latin"], preload: true, display: "swap", weight: ["600", "700"] });
 
 export const metadata: Metadata = {
   title: "Agent Chat",

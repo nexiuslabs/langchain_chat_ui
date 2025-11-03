@@ -4,27 +4,31 @@ export const runtime = "nodejs";
 // We align Undici's internal timeouts with our proxy timeout so AbortSignal governs.
 // Note: only effective in nodejs runtime (not edge).
 let __GLOBAL_UNDICI__: any = null;
-try {
-  // Undici is the fetch implementation in Node 18+/Next.js node runtime
-  // headersTimeout/bodyTimeout are in milliseconds
-  // If envs are not provided, fall back to a generous default (65 minutes)
-  // or to NEXT_BACKEND_TIMEOUT_MS + small cushion when available.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { Agent, setGlobalDispatcher } = require("undici");
-  const proxyMs = Number(process.env.NEXT_BACKEND_TIMEOUT_MS || 600000); // 10m default
-  const cushion = 120000; // +2m cushion to avoid racing the AbortSignal
-  const headersTimeout = Number(process.env.NEXT_HEADERS_TIMEOUT_MS || (proxyMs + cushion) || 3900000);
-  const bodyTimeout = Number(process.env.NEXT_BODY_TIMEOUT_MS || (proxyMs + cushion) || 3900000);
-  __GLOBAL_UNDICI__ = { Agent, setGlobalDispatcher, headersTimeout, bodyTimeout };
-  setGlobalDispatcher(new Agent({
-    connect: { timeout: 60000 }, // 60s connect timeout
-    headersTimeout,
-    bodyTimeout,
-    connections: Number(process.env.NEXT_BACKEND_CONNECTIONS || 16),
-    pipelining: 0,
-  }));
-} catch (_e) {
-  // Best-effort; if undici is not available or already configured, ignore.
+let __UNDICI_READY = false;
+async function ensureUndiciConfigured() {
+  if (__UNDICI_READY) return;
+  try {
+    // Undici is the fetch implementation in Node 18+/Next.js node runtime
+    // headersTimeout/bodyTimeout are in milliseconds
+    // If envs are not provided, fall back to a generous default (65 minutes)
+    // or to NEXT_BACKEND_TIMEOUT_MS + small cushion when available.
+    const { Agent, setGlobalDispatcher, fetch: undiciFetch } = await import("undici");
+    const proxyMs = Number(process.env.NEXT_BACKEND_TIMEOUT_MS || 600000); // 10m default
+    const cushion = 120000; // +2m cushion to avoid racing the AbortSignal
+    const headersTimeout = Number(process.env.NEXT_HEADERS_TIMEOUT_MS || (proxyMs + cushion) || 3900000);
+    const bodyTimeout = Number(process.env.NEXT_BODY_TIMEOUT_MS || (proxyMs + cushion) || 3900000);
+    __GLOBAL_UNDICI__ = { Agent, setGlobalDispatcher, headersTimeout, bodyTimeout, undiciFetch };
+    setGlobalDispatcher(new Agent({
+      connect: { timeout: 60000 }, // 60s connect timeout
+      headersTimeout,
+      bodyTimeout,
+      connections: Number(process.env.NEXT_BACKEND_CONNECTIONS || 16),
+      pipelining: 0,
+    }));
+    __UNDICI_READY = true;
+  } catch {
+    // Best-effort; if undici is not available or already configured, ignore.
+  }
 }
 
 function getDispatcher(): any | undefined {
@@ -70,6 +74,7 @@ function targetUrlFromSegments(req: Request, segments: string[]): string {
 }
 
 async function forward(method: string, request: Request, segments: string[]) {
+  await ensureUndiciConfigured();
   const url = targetUrlFromSegments(request, segments);
   const headers = new Headers();
   const auth = request.headers.get("authorization");
@@ -126,15 +131,15 @@ async function forward(method: string, request: Request, segments: string[]) {
   }
   // Use undici fetch with dispatcher when available to avoid Next's internal fetch limits
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const undici = require("undici");
-    const undiciFetch = (undici && undici.fetch) ? undici.fetch : null;
+    const undiciFetch = __GLOBAL_UNDICI__?.undiciFetch as any;
     const dispatcher = getDispatcher();
     if (undiciFetch && dispatcher) {
       const resp = await undiciFetch(url, { ...(init as any), dispatcher });
       return new Response(resp.body as any, { status: resp.status, headers: resp.headers as any });
     }
-  } catch (_e) { /* fall back to global fetch */ }
+  } catch {
+    /* fall back to global fetch */
+  }
   const resp = await fetch(url, init);
   return new Response(resp.body, { status: resp.status, headers: resp.headers });
 }
