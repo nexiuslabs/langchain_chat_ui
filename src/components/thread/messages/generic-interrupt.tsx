@@ -11,7 +11,7 @@ function isUrl(value: any): boolean {
   try {
     new URL(value);
     return value.startsWith("http://") || value.startsWith("https://");
-  } catch {
+  } catch (_err) {
     return false;
   }
 }

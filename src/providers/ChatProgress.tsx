@@ -36,14 +36,14 @@ export function ChatProgressProvider({ children }: { children: React.ReactNode }
   // Stable handlers
   const push = (label: string, payload: any) => {
     try {
-      const data = typeof payload === "string" ? (() => { try { return JSON.parse(payload); } catch { return { message: String(payload) }; } })() : payload;
+      const data = typeof payload === "string" ? (() => { try { return JSON.parse(payload); } catch (_err) { return { message: String(payload) }; } })() : payload;
       const msg = typeof data?.message === "string" ? data.message : undefined;
       setEvents((prev) => {
         const next = [...prev, { id: `${label}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, label, message: msg, data, ts: Date.now() }];
         // keep last 200
         return next.slice(-200);
       });
-    } catch {
+    } catch (_err) {
       setEvents((prev) => [...prev, { id: `${label}:${Date.now()}`, label, message: String(payload), ts: Date.now() }].slice(-200));
     }
   };
@@ -52,7 +52,7 @@ export function ChatProgressProvider({ children }: { children: React.ReactNode }
     // Start/stop EventSource on session change
     if (!sessionId) {
       if (esRef.current) {
-        try { esRef.current.close(); } catch { void 0; }
+        try { esRef.current.close(); } catch (_err) { void 0; }
         esRef.current = null;
       }
       return;
@@ -83,12 +83,12 @@ export function ChatProgressProvider({ children }: { children: React.ReactNode }
         // Let browser auto-reconnect; optionally log a soft event
         void 0;
       };
-    } catch {
+    } catch (_err) {
       // Silent fail; UI remains functional without stream
       void 0;
     }
     return () => {
-      try { esRef.current?.close(); } catch { void 0; }
+      try { esRef.current?.close(); } catch (_err) { void 0; }
       esRef.current = null;
     };
   }, [sessionId]);
@@ -116,7 +116,7 @@ export function ChatProgressProvider({ children }: { children: React.ReactNode }
           setEvents((prev) => [...prev, { id: key, label: 'icp:toplikes_ready', message: 'Top-listed lookalikes (with why) produced.', ts: Date.now() }].slice(-200));
         }
       }
-    } catch {
+    } catch (_err) {
       // ignore
       void 0;
     }

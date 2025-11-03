@@ -97,7 +97,7 @@ export default function HeaderBar() {
           if (r1.ok || [401,403,404,405].includes(r1.status)) { setOk(true); return; }
           const r2 = await fetch(altUrl, { credentials: 'include' });
           if (!cancelled) setOk(r2.ok || [401,403,404,405].includes(r2.status));
-        } catch {
+        } catch (_err) {
           if (!cancelled) setOk(false);
         }
       }

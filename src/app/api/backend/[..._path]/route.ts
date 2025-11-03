@@ -26,7 +26,7 @@ async function ensureUndiciConfigured() {
       pipelining: 0,
     }));
     __UNDICI_READY = true;
-  } catch {
+  } catch (_err) {
     // Best-effort; if undici is not available or already configured, ignore.
   }
 }
@@ -44,7 +44,7 @@ function getDispatcher(): any | undefined {
       connections: Number(process.env.NEXT_BACKEND_CONNECTIONS || 16),
       pipelining: 0,
     });
-  } catch { return undefined; }
+  } catch (_err) { return undefined; }
 }
 
 type Params = { _path: string[] };
@@ -101,7 +101,7 @@ async function forward(method: string, request: Request, segments: string[]) {
   try {
     const d = getDispatcher();
     if (d) (init as any).dispatcher = d;
-  } catch { /* ignore */ }
+  } catch (_err) { /* ignore */ }
   if (method !== "GET" && method !== "HEAD") {
     const bodyText = await request.text();
     let finalBody = bodyText;
@@ -137,7 +137,7 @@ async function forward(method: string, request: Request, segments: string[]) {
       const resp = await undiciFetch(url, { ...(init as any), dispatcher });
       return new Response(resp.body as any, { status: resp.status, headers: resp.headers as any });
     }
-  } catch {
+  } catch (_err) {
     /* fall back to global fetch */
   }
   const resp = await fetch(url, init);

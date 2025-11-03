@@ -22,7 +22,7 @@ async function ensureUndiciConfigured() {
       pipelining: 0,
     }));
     __UNDICI_READY = true;
-  } catch {
+  } catch (_err) {
     // ignore if undici not available or already configured
   }
 }
@@ -40,7 +40,7 @@ function getDispatcher(): any | undefined {
       connections: Number(process.env.NEXT_BACKEND_CONNECTIONS || 16),
       pipelining: 0,
     });
-  } catch { return undefined; }
+  } catch (_err) { return undefined; }
 }
 
 async function targetUrl(req: Request, params: Promise<Params> | Params): Promise<string> {
@@ -86,7 +86,7 @@ async function forward(method: string, request: Request, params: Promise<Params>
   try {
     const d = getDispatcher();
     if (d) (init as any).dispatcher = d;
-  } catch { /* ignore */ }
+  } catch (_err) { /* ignore */ }
   if (method !== "GET" && method !== "HEAD") {
     // Read fully to avoid body locking issues on edge runtime
     const bodyText = await request.text();
@@ -104,7 +104,7 @@ async function forward(method: string, request: Request, params: Promise<Params>
         headers: resp.headers as any,
       });
     }
-  } catch {
+  } catch (_err) {
     /* fallback to global fetch */
   }
   const resp = await fetch(url, init);

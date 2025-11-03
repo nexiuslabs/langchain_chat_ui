@@ -54,7 +54,7 @@ function parseAnthropicStreamedToolCalls(
     if (toolCall?.input) {
       try {
         json = parsePartialJson(toolCall.input) ?? {};
-      } catch {
+      } catch (_err) {
         // Pass
       }
     }

@@ -9,7 +9,7 @@ function decodeJwtNoVerify(token: string): any | null {
     const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
     const json = Buffer.from(payload, "base64").toString("utf8");
     return JSON.parse(json);
-  } catch {
+  } catch (_err) {
     return null;
   }
 }

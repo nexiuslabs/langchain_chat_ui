@@ -18,7 +18,7 @@ export function useAuthFetch() {
         if (c.trim().startsWith(n)) return true;
       }
       return false;
-    } catch {
+    } catch (_err) {
       return false;
     }
   }
