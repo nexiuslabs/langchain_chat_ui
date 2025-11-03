@@ -37,7 +37,7 @@ export function IndustryJobLauncher() {
 
   return (
     <div className="w-full border rounded p-2">
-      <div className="text-sm text-gray-700 mb-1">Queue nightly upsert for industries</div>
+      <div className="text-sm text-foreground mb-1">Queue nightly upsert for industries</div>
       <textarea
         value={text}
         onChange={(e) => onChange(e.target.value)}

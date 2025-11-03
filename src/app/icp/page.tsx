@@ -63,19 +63,19 @@ export default function ICPPage() {
               <div className="font-medium">{it.title}</div>
               <button onClick={() => onAccept(it.id)} className="px-2 py-1 text-sm rounded bg-emerald-600 text-white">Accept</button>
             </div>
-            <div className="text-xs text-gray-600 mt-1">Evidence: {it.evidence_count}{it.rationale ? ` — ${it.rationale}` : ''}</div>
+            <div className="text-xs text-muted-foreground mt-1">Evidence: {it.evidence_count}{it.rationale ? ` — ${it.rationale}` : ''}</div>
             {it.targeting_pack && (
               <div className="mt-2 text-sm">
                 <div className="font-medium">Targeting Pack</div>
                 <div>SSIC: {it.targeting_pack.ssic_filters?.join(", ") || '—'}</div>
                 <div>Tech: {it.targeting_pack.technographic_filters?.join(", ") || '—'}</div>
-                <div className="text-gray-700">Pitch: {it.targeting_pack.pitch || '—'}</div>
+                <div className="text-foreground">Pitch: {it.targeting_pack.pitch || '—'}</div>
               </div>
             )}
             {it.negative_icp && it.negative_icp.length > 0 && (
               <div className="mt-2 text-sm">
                 <div className="font-medium">Negative ICP (derived)</div>
-                <ul className="list-disc list-inside text-gray-700">
+                <ul className="list-disc list-inside text-foreground">
                   {it.negative_icp.map((n, idx) => <li key={idx}>{n.theme.replaceAll('_', ' ')} — {n.count}</li>)}
                 </ul>
               </div>
@@ -89,4 +89,3 @@ export default function ICPPage() {
     </div>
   );
 }
-

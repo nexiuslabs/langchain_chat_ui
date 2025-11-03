@@ -59,10 +59,10 @@ export function CandidatesPanel({ height = 420 }: { height?: number }) {
 
   const row = (c: Candidate) => (
     <div className="px-2 py-2 border-b text-sm flex items-center gap-3">
-      <div className="w-20 text-gray-500">#{c.company_id}</div>
+      <div className="w-20 text-muted-foreground">#{c.company_id}</div>
       <div className="flex-1 truncate">
         <div className="font-medium truncate">{c.name || '(unnamed)'}</div>
-        <div className="text-xs text-gray-500 truncate">{c.industry_norm || '—'} · {c.website_domain || '—'} · {c.last_seen ? new Date(c.last_seen).toLocaleString() : '—'}</div>
+        <div className="text-xs text-muted-foreground truncate">{c.industry_norm || '—'} · {c.website_domain || '—'} · {c.last_seen ? new Date(c.last_seen).toLocaleString() : '—'}</div>
       </div>
     </div>
   )
@@ -72,7 +72,7 @@ export function CandidatesPanel({ height = 420 }: { height?: number }) {
       <div className="flex items-center gap-2 mb-2">
         <input className="border rounded px-2 py-1 text-sm" placeholder="filter by industry" value={industry} onChange={(e) => setIndustry(e.target.value)} />
         <button className="text-sm px-2 py-1 border rounded" onClick={() => { doneRef.current = false; void loadMore(true) }}>Refresh</button>
-        {loading && <span className="text-xs text-gray-500">Loading…</span>}
+        {loading && <span className="text-xs text-muted-foreground">Loading…</span>}
         {error && <span className="text-xs text-red-600">{error}</span>}
       </div>
       <VirtualList items={items} itemHeight={56} height={height} renderRow={(c) => row(c)} />

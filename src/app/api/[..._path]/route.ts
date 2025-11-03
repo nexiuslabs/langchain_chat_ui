@@ -1,6 +1,28 @@
 export const runtime = "nodejs";
 
+import { Agent, setGlobalDispatcher } from "undici";
+
 type Params = { _path: string[] };
+
+// Align Undici internal timeouts with our desired proxy timeout so we don't hit
+// 5-minute defaults (UND_ERR_HEADERS_TIMEOUT/UND_ERR_BODY_TIMEOUT) during long streams.
+(() => {
+  try {
+    const proxyMs = Number(process.env.NEXT_BACKEND_TIMEOUT_MS || 600000); // reuse same knob
+    const cushion = 120000; // +2 minutes
+    const headersTimeout = Number(process.env.NEXT_HEADERS_TIMEOUT_MS ?? (proxyMs + cushion));
+    const bodyTimeout = Number(process.env.NEXT_BODY_TIMEOUT_MS ?? (proxyMs + cushion));
+    setGlobalDispatcher(new Agent({
+      connect: { timeout: 60000 },
+      headersTimeout,
+      bodyTimeout,
+      connections: Number(process.env.NEXT_BACKEND_CONNECTIONS || 16),
+      pipelining: 0,
+    }));
+  } catch {
+    // ignore if undici not available
+  }
+})();
 
 async function targetUrl(req: Request, params: Promise<Params> | Params): Promise<string> {
   const { _path } = await params;
@@ -34,6 +56,13 @@ async function forward(method: string, request: Request, params: Promise<Params>
   if (apiKey) headers.set("x-api-key", apiKey);
 
   const init: RequestInit = { method, headers };
+  // Apply a long timeout so long-running calls and streams don't get cut off.
+  const timeoutMs = Number(process.env.NEXT_BACKEND_TIMEOUT_MS || 600000); // 10 minutes default
+  try {
+    (init as any).signal = (AbortSignal as any).timeout(timeoutMs);
+  } catch {
+    /* ignore */
+  }
   if (method !== "GET" && method !== "HEAD") {
     // Read fully to avoid body locking issues on edge runtime
     const bodyText = await request.text();

@@ -1,5 +1,28 @@
 export const runtime = "nodejs";
 
+import { Agent, setGlobalDispatcher } from "undici";
+
+// Ensure Node/Undici doesn't kill long-running streams around 5 minutes.
+// We align Undici's internal timeouts with our proxy timeout so AbortSignal governs.
+// Note: only effective in nodejs runtime (not edge).
+(() => {
+  try {
+    const proxyMs = Number(process.env.NEXT_BACKEND_TIMEOUT_MS || 600000); // 10m default
+    const cushion = 120000; // +2m cushion to avoid racing the AbortSignal
+    const headersTimeout = Number(process.env.NEXT_HEADERS_TIMEOUT_MS ?? (proxyMs + cushion));
+    const bodyTimeout = Number(process.env.NEXT_BODY_TIMEOUT_MS ?? (proxyMs + cushion));
+    setGlobalDispatcher(new Agent({
+      connect: { timeout: 60000 }, // 60s connect timeout
+      headersTimeout,
+      bodyTimeout,
+      connections: Number(process.env.NEXT_BACKEND_CONNECTIONS || 16),
+      pipelining: 0,
+    }));
+  } catch {
+    // ignore; defaults will apply
+  }
+})();
+
 type Params = { _path: string[] };
 
 async function segmentsFromContext(ctx: any): Promise<string[]> {
@@ -46,8 +69,8 @@ async function forward(method: string, request: Request, segments: string[]) {
   try {
     // AbortSignal.timeout is available in modern Node runtimes
     (init as any).signal = (AbortSignal as any).timeout(timeoutMs);
-  } catch (e) {
-    void e; // Ignore if not available; default runtime limits apply
+  } catch {
+    /* ignore: default runtime limits apply */
   }
   if (method !== "GET" && method !== "HEAD") {
     const bodyText = await request.text();
