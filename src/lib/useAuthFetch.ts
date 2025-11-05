@@ -1,6 +1,7 @@
 "use client";
 
 import { useSession, signIn } from "next-auth/react";
+import { logEvent } from "@/lib/troubleshoot-logger";
 
 export function useAuthFetch() {
   const { data: session } = useSession();
@@ -63,7 +64,67 @@ export function useAuthFetch() {
       }
     } catch (e) { void e; }
 
-    const doFetch = async () => fetch(target, { ...init, headers, credentials: "include" });
+    const doFetch = async () => {
+      const timer = typeof performance !== "undefined" ? performance : null;
+      const start = timer ? timer.now() : Date.now();
+      const resolvedUrl = (() => {
+        if (typeof target === "string") return target;
+        if (typeof URL !== "undefined" && target instanceof URL) return target.toString();
+        try {
+          return (target as Request).url || urlStr;
+        } catch (_err) {
+          return urlStr;
+        }
+      })();
+      const method = (init.method || (typeof (target as Request | undefined)?.method === "string" ? (target as Request).method : "GET")).toUpperCase();
+      const sanitizedRoute = resolvedUrl.split("?")[0];
+      const host = (() => {
+        try {
+          const base = typeof window !== "undefined" ? window.location.origin : "http://localhost";
+          return new URL(resolvedUrl, base).host;
+        } catch (_err) {
+          return undefined;
+        }
+      })();
+      try {
+        const response = await fetch(target, { ...init, headers, credentials: "include" });
+        const elapsed = (timer ? timer.now() : Date.now()) - start;
+        if (!response.ok) {
+          logEvent({
+            level: response.status >= 500 ? "error" : "warn",
+            message: `Request failed (${response.status})`,
+            component: "useAuthFetch",
+            route: sanitizedRoute,
+            http: {
+              method,
+              host,
+              status: response.status,
+              duration_ms: Math.round(elapsed),
+            },
+          });
+        }
+        return response;
+      } catch (error: any) {
+        const elapsed = (timer ? timer.now() : Date.now()) - start;
+        logEvent({
+          level: "error",
+          message: error?.message || "Network request failed",
+          component: "useAuthFetch",
+          route: sanitizedRoute,
+          http: {
+            method,
+            host,
+            duration_ms: Math.round(elapsed),
+          },
+          error: {
+            type: error?.name || "FetchError",
+            message: error?.message || String(error),
+            stack: String(error?.stack || "").split("\n").slice(0, 6),
+          },
+        });
+        throw error;
+      }
+    };
     let res = await doFetch();
     if (res.status !== 401) return res;
     // Attempt silent cookie refresh once (backend), then retry the original request

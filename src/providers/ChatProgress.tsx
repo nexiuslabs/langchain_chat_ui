@@ -1,6 +1,7 @@
 "use client";
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useStreamContext } from "@/providers/Stream";
+import { logEvent } from "@/lib/troubleshoot-logger";
 
 type ProgressEvent = {
   id: string;
@@ -58,6 +59,7 @@ export function ChatProgressProvider({ children }: { children: React.ReactNode }
       return;
     }
     const url = buildStreamUrl(sessionId);
+    const sanitizedUrl = url.split("?")[0];
     try {
       const es = new EventSource(url, { withCredentials: true });
       esRef.current = es;
@@ -80,12 +82,26 @@ export function ChatProgressProvider({ children }: { children: React.ReactNode }
         "enrich:summary",
       ].forEach((label) => es.addEventListener(label, (e) => push(label, (e as MessageEvent).data)));
       es.onerror = () => {
-        // Let browser auto-reconnect; optionally log a soft event
-        void 0;
+        logEvent({
+          level: "warn",
+          message: "SSE connection error",
+          component: "ChatProgress.EventSource",
+          route: sanitizedUrl,
+          data: { session_id: sessionId },
+        });
       };
-    } catch (_err) {
-      // Silent fail; UI remains functional without stream
-      void 0;
+    } catch (err: any) {
+      logEvent({
+        level: "error",
+        message: err?.message || "Failed to initialise SSE stream",
+        component: "ChatProgress.EventSource",
+        route: sessionId ? buildStreamUrl(sessionId).split("?")[0] : undefined,
+        error: {
+          type: err?.name || "EventSourceInitError",
+          message: err?.message || String(err),
+          stack: String(err?.stack || "").split("\n").slice(0, 6),
+        },
+      });
     }
     return () => {
       try { esRef.current?.close(); } catch (_err) { void 0; }
