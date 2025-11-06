@@ -11,7 +11,7 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "NEXT_DISABLE_FILE_TRACE=1 next build",
     "start": "next start",
     "lint": "next lint",
     "test": "pnpm exec tsc -p tsconfig.test.json && node --test .tmp-tests/__tests__ && rm -rf .tmp-tests",
