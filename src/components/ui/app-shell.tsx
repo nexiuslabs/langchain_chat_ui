@@ -125,6 +125,73 @@ function TenantOverride({ enabled, apiBase, authFetch }: { enabled: boolean; api
   );
 }
 
+function DiagnosticControls() {
+  const [token, setToken] = useState("");
+  const [active, setActive] = useState(false);
+  const [expires, setExpires] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const match = document.cookie.split(";").map((c) => c.trim()).find((c) => c.startsWith("diag="));
+    if (match) {
+      setActive(true);
+      setExpires(null);
+    } else {
+      setActive(false);
+    }
+  }, []);
+
+  const setCookie = () => {
+    if (typeof document === "undefined" || !token) return;
+    const maxAge = 3600;
+    document.cookie = `diag=${token}; path=/; max-age=${maxAge}; SameSite=Lax`;
+    setActive(true);
+    const exp = new Date(Date.now() + maxAge * 1000).toISOString();
+    setExpires(exp);
+    setToken("");
+  };
+
+  const clearCookie = () => {
+    if (typeof document === "undefined") return;
+    document.cookie = "diag=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax";
+    setActive(false);
+    setExpires(null);
+  };
+
+  return (
+    <div className="grid gap-2" aria-label="Diagnostic mode toggle">
+      <p className="text-sm font-medium">Diagnostic mode</p>
+      <p className="text-xs text-muted-foreground">
+        Paste a signed token (from ops) to allow <code>info/debug</code> logs in production for this browser session.
+      </p>
+      <div className="flex gap-2">
+        <Input
+          placeholder="diag token"
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          className="flex-1"
+          aria-label="Diagnostic token"
+        />
+        <Button variant="secondary" onClick={setCookie} disabled={!token}>
+          Enable
+        </Button>
+        <Button variant="ghost" onClick={clearCookie} disabled={!active}>
+          Clear
+        </Button>
+      </div>
+      <p className="text-xs">
+        Status:{" "}
+        <span className={active ? "text-green-600" : "text-muted-foreground"}>
+          {active ? "active" : "inactive"}
+        </span>
+        {active && expires && (
+          <span className="text-muted-foreground"> (expires {new Date(expires).toLocaleTimeString()})</span>
+        )}
+      </p>
+    </div>
+  );
+}
+
 export function AppShell(): React.ReactNode {
   const pathname = usePathname();
   const { data: session } = useSession();
@@ -270,6 +337,8 @@ export function AppShell(): React.ReactNode {
                 </div>
                 <Separator />
                 <TenantOverride enabled={enableTenantSwitcher} apiBase={apiBase} authFetch={authFetch} />
+                <Separator />
+                <DiagnosticControls />
                 <Separator />
                 <div className="flex justify-end items-center">
                   <Button variant="destructive" onClick={globalSignOut}>Sign out</Button>
