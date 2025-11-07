@@ -6,6 +6,12 @@ type Params = { _path: string[] };
 let __GLOBAL_UNDICI__: any = null;
 let __UNDICI_READY = false;
 async function ensureUndiciConfigured() {
+  console.log("[proxy/api] ensuring undici", {
+    timeout: process.env.NEXT_BACKEND_TIMEOUT_MS,
+    headersTimeout: process.env.NEXT_HEADERS_TIMEOUT_MS,
+    bodyTimeout: process.env.NEXT_BODY_TIMEOUT_MS,
+    nodeEnv: process.env.NODE_ENV,
+  });
   if (__UNDICI_READY) return;
   try {
     const { Agent, setGlobalDispatcher, fetch: undiciFetch } = await import("undici");
@@ -13,6 +19,7 @@ async function ensureUndiciConfigured() {
     const cushion = 120000; // +2 minutes
     const headersTimeout = Number(process.env.NEXT_HEADERS_TIMEOUT_MS || (proxyMs + cushion) || 3900000);
     const bodyTimeout = Number(process.env.NEXT_BODY_TIMEOUT_MS || (proxyMs + cushion) || 3900000);
+    console.log("[proxy/api] undici ready", { headersTimeout, bodyTimeout });
     __GLOBAL_UNDICI__ = { Agent, setGlobalDispatcher, headersTimeout, bodyTimeout, undiciFetch };
     setGlobalDispatcher(new Agent({
       connect: { timeout: 60000 },
@@ -22,8 +29,8 @@ async function ensureUndiciConfigured() {
       pipelining: 0,
     }));
     __UNDICI_READY = true;
-  } catch (_err) {
-    // ignore if undici not available or already configured
+  } catch (err) {
+    console.error("[proxy/api] undici import failed", err);
   }
 }
 

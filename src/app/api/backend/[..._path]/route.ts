@@ -6,6 +6,12 @@ export const runtime = "nodejs";
 let __GLOBAL_UNDICI__: any = null;
 let __UNDICI_READY = false;
 async function ensureUndiciConfigured() {
+  console.log("[proxy/backend] ensuring undici", {
+    timeout: process.env.NEXT_BACKEND_TIMEOUT_MS,
+    headersTimeout: process.env.NEXT_HEADERS_TIMEOUT_MS,
+    bodyTimeout: process.env.NEXT_BODY_TIMEOUT_MS,
+    nodeEnv: process.env.NODE_ENV,
+  });
   if (__UNDICI_READY) return;
   try {
     // Undici is the fetch implementation in Node 18+/Next.js node runtime
@@ -17,6 +23,7 @@ async function ensureUndiciConfigured() {
     const cushion = 120000; // +2m cushion to avoid racing the AbortSignal
     const headersTimeout = Number(process.env.NEXT_HEADERS_TIMEOUT_MS || (proxyMs + cushion) || 3900000);
     const bodyTimeout = Number(process.env.NEXT_BODY_TIMEOUT_MS || (proxyMs + cushion) || 3900000);
+    console.log("[proxy/backend] undici ready", { headersTimeout, bodyTimeout });
     __GLOBAL_UNDICI__ = { Agent, setGlobalDispatcher, headersTimeout, bodyTimeout, undiciFetch };
     setGlobalDispatcher(new Agent({
       connect: { timeout: 60000 }, // 60s connect timeout
@@ -26,8 +33,8 @@ async function ensureUndiciConfigured() {
       pipelining: 0,
     }));
     __UNDICI_READY = true;
-  } catch (_err) {
-    // Best-effort; if undici is not available or already configured, ignore.
+  } catch (err) {
+    console.error("[proxy/backend] undici import failed", err);
   }
 }
 
