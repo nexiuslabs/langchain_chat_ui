@@ -1,3 +1,5 @@
+import { logProxyActivity } from "@/lib/server-proxy-logger";
+
 export const runtime = "nodejs";
 
 // Ensure Node/Undici doesn't kill long-running streams around 5 minutes.
@@ -80,9 +82,21 @@ function targetUrlFromSegments(req: Request, segments: string[]): string {
   return url.toString();
 }
 
+function summarizeUrl(raw: string): string {
+  try {
+    const parsed = new URL(raw);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch (_err) {
+    return raw;
+  }
+}
+
 async function forward(method: string, request: Request, segments: string[]) {
   await ensureUndiciConfigured();
   const url = targetUrlFromSegments(request, segments);
+  const logUrl = summarizeUrl(url);
+  const started = Date.now();
+  logProxyActivity({ scope: "backend", phase: "request", method, url: logUrl });
   const headers = new Headers();
   const auth = request.headers.get("authorization");
   const tenant = request.headers.get("x-tenant-id");
@@ -109,46 +123,75 @@ async function forward(method: string, request: Request, segments: string[]) {
     const d = getDispatcher();
     if (d) (init as any).dispatcher = d;
   } catch (_err) { /* ignore */ }
-  if (method !== "GET" && method !== "HEAD") {
-    const bodyText = await request.text();
-    let finalBody = bodyText;
-    // Inject a session_id derived from thread_id for run-start APIs so backend can bind SSE
-    try {
-      // Expect segments like: ["threads", "<thread_id>", "runs", ("stream")?]
-      const isRunStart = segments.length >= 3 && segments[0] === "threads" && segments[2].startsWith("runs");
-      if (isRunStart && bodyText && bodyText.trim().startsWith("{")) {
-        const threadId = segments[1];
-        const payload: any = JSON.parse(bodyText);
-        const input = (payload?.input && typeof payload.input === "object") ? payload.input : (typeof payload === "object" ? payload : {});
-        // Place session_id in multiple places for maximum compatibility
-        input.session_id = input.session_id || threadId;
-        payload.input = input;
-        payload.session_id = payload.session_id || threadId;
-        payload.context = { ...(payload.context || {}), session_id: threadId };
-        finalBody = JSON.stringify(payload);
-        // Ensure JSON content-type
-        headers.set("content-type", "application/json");
-      }
-    } catch (e) {
-      // On any parsing error, fall back to original body
-      finalBody = bodyText;
-    }
-    init.body = finalBody;
-    (init as any).duplex = "half";
-  }
-  // Use undici fetch with dispatcher when available to avoid Next's internal fetch limits
   try {
-    const undiciFetch = __GLOBAL_UNDICI__?.undiciFetch as any;
-    const dispatcher = getDispatcher();
-    if (undiciFetch && dispatcher) {
-      const resp = await undiciFetch(url, { ...(init as any), dispatcher });
-      return new Response(resp.body as any, { status: resp.status, headers: resp.headers as any });
+    if (method !== "GET" && method !== "HEAD") {
+      const bodyText = await request.text();
+      let finalBody = bodyText;
+      // Inject a session_id derived from thread_id for run-start APIs so backend can bind SSE
+      try {
+        // Expect segments like: ["threads", "<thread_id>", "runs", ("stream")?]
+        const isRunStart = segments.length >= 3 && segments[0] === "threads" && segments[2].startsWith("runs");
+        if (isRunStart && bodyText && bodyText.trim().startsWith("{")) {
+          const threadId = segments[1];
+          const payload: any = JSON.parse(bodyText);
+          const input = (payload?.input && typeof payload.input === "object") ? payload.input : (typeof payload === "object" ? payload : {});
+          // Place session_id in multiple places for maximum compatibility
+          input.session_id = input.session_id || threadId;
+          payload.input = input;
+          payload.session_id = payload.session_id || threadId;
+          payload.context = { ...(payload.context || {}), session_id: threadId };
+          finalBody = JSON.stringify(payload);
+          // Ensure JSON content-type
+          headers.set("content-type", "application/json");
+        }
+      } catch (e) {
+        // On any parsing error, fall back to original body
+        finalBody = bodyText;
+      }
+      init.body = finalBody;
+      (init as any).duplex = "half";
     }
-  } catch (_err) {
-    /* fall back to global fetch */
+    // Use undici fetch with dispatcher when available to avoid Next's internal fetch limits
+    try {
+      const undiciFetch = __GLOBAL_UNDICI__?.undiciFetch as any;
+      const dispatcher = getDispatcher();
+      if (undiciFetch && dispatcher) {
+        const resp = await undiciFetch(url, { ...(init as any), dispatcher });
+        logProxyActivity({
+          scope: "backend",
+          phase: "response",
+          method,
+          url: logUrl,
+          status: resp.status,
+          duration_ms: Date.now() - started,
+        });
+        return new Response(resp.body as any, { status: resp.status, headers: resp.headers as any });
+      }
+    } catch (_err) {
+      /* fall back to global fetch */
+    }
+    const resp = await fetch(url, init);
+    logProxyActivity({
+      scope: "backend",
+      phase: "response",
+      method,
+      url: logUrl,
+      status: resp.status,
+      duration_ms: Date.now() - started,
+    });
+    return new Response(resp.body, { status: resp.status, headers: resp.headers });
+  } catch (error: any) {
+    logProxyActivity({
+      scope: "backend",
+      phase: "error",
+      method,
+      url: logUrl,
+      duration_ms: Date.now() - started,
+      message: error?.message || "proxy error",
+      error_code: error?.code,
+    });
+    throw error;
   }
-  const resp = await fetch(url, init);
-  return new Response(resp.body, { status: resp.status, headers: resp.headers });
 }
 
 export async function GET(request: Request, ctx: any) {

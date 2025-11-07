@@ -1,3 +1,5 @@
+import { logProxyActivity } from "@/lib/server-proxy-logger";
+
 export const runtime = "nodejs";
 
 type Params = { _path: string[] };
@@ -64,9 +66,21 @@ async function targetUrl(req: Request, params: Promise<Params> | Params): Promis
   return url.toString();
 }
 
+function summarizeUrl(raw: string): string {
+  try {
+    const parsed = new URL(raw);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch (_err) {
+    return raw;
+  }
+}
+
 async function forward(method: string, request: Request, params: Promise<Params> | Params) {
   await ensureUndiciConfigured();
   const url = await targetUrl(request, params);
+  const logUrl = summarizeUrl(url);
+  const started = Date.now();
+  logProxyActivity({ scope: "api", phase: "request", method, url: logUrl });
   const headers = new Headers();
   // Forward selected headers from client
   const auth = request.headers.get("authorization");
@@ -94,32 +108,61 @@ async function forward(method: string, request: Request, params: Promise<Params>
     const d = getDispatcher();
     if (d) (init as any).dispatcher = d;
   } catch (_err) { /* ignore */ }
-  if (method !== "GET" && method !== "HEAD") {
-    // Read fully to avoid body locking issues on edge runtime
-    const bodyText = await request.text();
-    init.body = bodyText;
-    (init as any).duplex = "half";
-  }
-  // Prefer undici.fetch with dispatcher when present to enforce our timeouts/connections
   try {
-    const undiciFetch = __GLOBAL_UNDICI__?.undiciFetch as any;
-    const dispatcher = getDispatcher();
-    if (undiciFetch && dispatcher) {
-      const resp = await undiciFetch(url, { ...(init as any), dispatcher });
-      return new Response(resp.body as any, {
-        status: resp.status,
-        headers: resp.headers as any,
-      });
+    if (method !== "GET" && method !== "HEAD") {
+      // Read fully to avoid body locking issues on edge runtime
+      const bodyText = await request.text();
+      init.body = bodyText;
+      (init as any).duplex = "half";
     }
-  } catch (_err) {
-    /* fallback to global fetch */
+    // Prefer undici.fetch with dispatcher when present to enforce our timeouts/connections
+    try {
+      const undiciFetch = __GLOBAL_UNDICI__?.undiciFetch as any;
+      const dispatcher = getDispatcher();
+      if (undiciFetch && dispatcher) {
+        const resp = await undiciFetch(url, { ...(init as any), dispatcher });
+        logProxyActivity({
+          scope: "api",
+          phase: "response",
+          method,
+          url: logUrl,
+          status: resp.status,
+          duration_ms: Date.now() - started,
+        });
+        return new Response(resp.body as any, {
+          status: resp.status,
+          headers: resp.headers as any,
+        });
+      }
+    } catch (_err) {
+      /* fallback to global fetch */
+    }
+    const resp = await fetch(url, init);
+    logProxyActivity({
+      scope: "api",
+      phase: "response",
+      method,
+      url: logUrl,
+      status: resp.status,
+      duration_ms: Date.now() - started,
+    });
+    // Stream response back
+    return new Response(resp.body, {
+      status: resp.status,
+      headers: resp.headers,
+    });
+  } catch (error: any) {
+    logProxyActivity({
+      scope: "api",
+      phase: "error",
+      method,
+      url: logUrl,
+      duration_ms: Date.now() - started,
+      message: error?.message || "proxy error",
+      error_code: error?.code,
+    });
+    throw error;
   }
-  const resp = await fetch(url, init);
-  // Stream response back
-  return new Response(resp.body, {
-    status: resp.status,
-    headers: resp.headers,
-  });
 }
 
 export async function GET(request: Request, ctx: any) {
