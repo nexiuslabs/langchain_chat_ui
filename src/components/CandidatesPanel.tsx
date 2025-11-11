@@ -4,7 +4,7 @@ import { useAuthFetch } from "@/lib/useAuthFetch"
 
 type Candidate = { company_id: number; name: string | null; industry_norm: string | null; website_domain: string | null; last_seen: string | null }
 
-export function CandidatesPanel({ height = 420 }: { height?: number }) {
+export function CandidatesPanel({ height = 640 }: { height?: number }) {
   const [items, setItems] = useState<Candidate[]>([])
   const [loading, setLoading] = useState(false)
   const [cursor, setCursor] = useState<any | null>(null)
@@ -88,7 +88,7 @@ export function CandidatesPanel({ height = 420 }: { height?: number }) {
         {loading && <span className="text-xs text-muted-foreground">Loading…</span>}
         {error && <span className="text-xs text-red-600">{error}</span>}
       </div>
-      <div className="overflow-auto" style={{ maxHeight: `${tableHeight}px` }}>
+      <div className="overflow-auto" style={{ height: `${tableHeight}px` }}>
         <table className="min-w-full text-sm">
           <thead className="sticky top-0 bg-muted text-xs uppercase tracking-wide text-muted-foreground">
             <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left">

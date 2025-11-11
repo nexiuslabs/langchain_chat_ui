@@ -7,8 +7,8 @@ export default function CandidatesPage() {
   return (
     <React.Suspense fallback={<div>Loading…</div>}>
       <AppShell />
-      <div className="max-w-5xl mx-auto p-4 grid gap-4">
-        <CandidatesPanel height={520} />
+      <div className="mx-auto px-2 sm:px-4 py-2 grid gap-2">
+        <CandidatesPanel height={720} />
       </div>
     </React.Suspense>
   )
