@@ -51,7 +51,7 @@ export default function LoginPage() {
       <Card className="w-full max-w-md">
         <CardHeader>
           <h1 className="text-xl font-semibold uppercase tracking-wide">Sign in</h1>
-          <p className="text-sm text-muted-foreground">Access your recruiting workspace.</p>
+          <p className="text-sm text-muted-foreground">Access your lead generation workspace.</p>
         </CardHeader>
         <CardContent>
           {error ? <div className="mb-3 text-sm text-red-600" role="alert">{error}</div> : null}
