@@ -243,9 +243,7 @@ export default function HeaderBar() {
           )}
         </div>
         <div className="flex items-center gap-3">
-          <a href="/" className="text-sm px-2 py-1 border rounded" title="Back to Chat">Chat</a>
-          <a href="/candidates" className="text-sm px-2 py-1 border rounded" title="View latest candidates">Candidates</a>
-          <a href="/metrics" className="text-sm px-2 py-1 border rounded" title="View metrics dashboard">Metrics</a>
+          {/* Chat, Candidates, Metrics actions intentionally hidden */}
           <ConnectionBadge />
           <ShortlistStatusBadge />
           <ExportButtons />

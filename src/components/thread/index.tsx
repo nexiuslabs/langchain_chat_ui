@@ -54,6 +54,29 @@ const ChatProgressFeed = dynamic(
   { ssr: false },
 );
 
+const buildMessageKey = (message: Message, fallbackIndex = 0) => {
+  if (message?.id) return `id:${message.id}`;
+  const text = getContentString((message as Message)?.content ?? []);
+  const createdAt = (message as any)?.created_at ?? "";
+  return `noid:${message?.type ?? "unknown"}:${createdAt}:${text}:${fallbackIndex}`;
+};
+
+const mergeSnapshotMessages = (existing: Message[], incoming: Message[]) => {
+  if (!incoming.length) return existing;
+  const seen = new Set<string>();
+  existing.forEach((msg, idx) => {
+    seen.add(buildMessageKey(msg, idx));
+  });
+  const merged = [...existing];
+  incoming.forEach((msg, idx) => {
+    const key = buildMessageKey(msg, existing.length + idx);
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.push(msg);
+  });
+  return merged;
+};
+
 function StickyToBottomContent(props: {
   content: ReactNode;
   footer?: ReactNode;
@@ -136,9 +159,26 @@ export function Thread() {
   const ttfbStartRef = useRef<number | null>(null);
   const ttfbSentRef = useRef<boolean>(false);
   const isLargeScreen = useMediaQuery("(min-width: 1024px)");
+  const greetedThreadsRef = useRef<Set<string>>(new Set());
+  const messageSnapshotsRef = useRef<Map<string, Message[]>>(new Map());
 
   const stream = useStreamContext();
-  const messages = stream.messages;
+  const liveMessages = stream.messages;
+  useEffect(() => {
+    if (!threadId) return;
+    if (!liveMessages.length) return;
+    const existing = messageSnapshotsRef.current.get(threadId) ?? [];
+    const merged = mergeSnapshotMessages(existing, liveMessages);
+    messageSnapshotsRef.current.set(threadId, merged);
+  }, [threadId, liveMessages]);
+  const snapshotMessages =
+    threadId && messageSnapshotsRef.current.has(threadId)
+      ? messageSnapshotsRef.current.get(threadId)
+      : undefined;
+  const messages =
+    snapshotMessages && snapshotMessages.length
+      ? snapshotMessages
+      : liveMessages;
   const isLoading = stream.isLoading;
   const streamClient: any = (stream as any)?.client;
   const assistantIdFromStream: string | undefined = (stream as any)?.assistantId;
@@ -202,13 +242,50 @@ export function Thread() {
     }
   }, [stream.error]);
 
+  // Auto-run a greeting as soon as a new thread is ready so the agent speaks before user input.
+  // Proactively ensure a tenant-scoped thread exists as soon as possible.
+  useEffect(() => {
+    if (threadId) return;
+    void ensureTenantThread();
+  }, [threadId, assistantIdFromStream, tenantId]);
+
+  // Auto-run a greeting immediately after a new thread is ready so the agent speaks first.
+  useEffect(() => {
+    if (!threadId) return;
+    if (!stream || typeof stream.submit !== "function") return;
+    if (stream.isLoading) return;
+    if (greetedThreadsRef.current.has(threadId)) return;
+
+    greetedThreadsRef.current.add(threadId);
+    const context =
+      tenantId && tenantId.trim().length > 0 ? { tenant_id: tenantId } : undefined;
+    const payload: any = {};
+    if (context) payload.context = context;
+    payload.messages = [
+      {
+        id: uuidv4(),
+        type: "human",
+        content: [{ type: "text", text: "" }],
+      },
+    ];
+    stream.submit(payload, {
+      streamMode: ["values"],
+      optimisticValues: (prev) => ({
+        ...prev,
+        context,
+        messages: [...(prev.messages ?? []), ...(payload.messages || [])],
+      }),
+      keepLatest: true,
+    });
+  }, [threadId, stream, stream.isLoading, tenantId]);
+
   // TODO: this should be part of the useStream hook
   const prevMessageLength = useRef(0);
   useEffect(() => {
     if (
-      messages.length !== prevMessageLength.current &&
-      messages?.length &&
-      messages[messages.length - 1].type === "ai"
+      liveMessages.length !== prevMessageLength.current &&
+      liveMessages?.length &&
+      liveMessages[liveMessages.length - 1].type === "ai"
     ) {
       setFirstTokenReceived(true);
       try {
@@ -228,8 +305,8 @@ export function Thread() {
       } catch (e) { void e; }
     }
 
-    prevMessageLength.current = messages.length;
-  }, [messages]);
+    prevMessageLength.current = liveMessages.length;
+  }, [liveMessages]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -273,6 +350,7 @@ export function Thread() {
             newHumanMessage,
           ],
         }),
+        keepLatest: true,
       },
     );
 
