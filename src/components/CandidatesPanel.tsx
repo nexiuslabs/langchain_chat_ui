@@ -1,5 +1,5 @@
 "use client"
-import React, { useEffect, useMemo, useRef, useState } from "react"
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useAuthFetch } from "@/lib/useAuthFetch"
 
 type Candidate = { company_id: number; name: string | null; industry_norm: string | null; website_domain: string | null; last_seen: string | null }
@@ -16,7 +16,7 @@ export function CandidatesPanel({ height = 640 }: { height?: number }) {
   const apiBase = useMemo(() => useProxy ? "/api/backend" : (process.env.NEXT_PUBLIC_API_URL || ""), [useProxy])
   const authFetch = useAuthFetch()
 
-  async function loadMore(reset = false) {
+  const loadMore = useCallback(async (reset = false) => {
     if (loading || doneRef.current) return
     setLoading(true)
     try {
@@ -40,27 +40,27 @@ export function CandidatesPanel({ height = 640 }: { height?: number }) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [apiBase, authFetch, cursor, industry, loading])
 
   useEffect(() => {
     doneRef.current = false
     setCursor(null)
     setItems([])
     void loadMore(true)
-  }, [industry])
+  }, [industry, loadMore])
 
   // Auto-load more when near end
   useEffect(() => {
     if (items.length < 100 || loading || doneRef.current) return
     // if list is short, try to fill a bit more
     void loadMore(false)
-  }, [items, loading])
+  }, [items, loading, loadMore])
 
   const formatDate = (value: string | null) => {
     if (!value) return "—"
     try {
       return new Date(value).toLocaleString()
-    } catch (err) {
+    } catch (_err) {
       return value
     }
   }

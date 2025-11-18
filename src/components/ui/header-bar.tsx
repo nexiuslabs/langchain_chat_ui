@@ -121,7 +121,7 @@ export default function HeaderBar() {
 
   function ShortlistStatusBadge() {
     const [data, setData] = useState<{ total_scored: number; last_refreshed_at: string | null } | null>(null);
-    const [err, setErr] = useState<string | null>(null);
+    const [, setErr] = useState<string | null>(null);
     useEffect(() => {
       let cancelled = false;
       async function poll() {

@@ -34,7 +34,7 @@ export function useJobPolling(
           setDone(true)
           if (timerRef.current) clearInterval(timerRef.current)
         }
-      } catch (e) {
+      } catch {
         // Non-fatal; keep polling a couple more rounds
       } finally {
         setLoading(false)
@@ -45,7 +45,7 @@ export function useJobPolling(
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)
     }
-  }, [apiBase, jobId, intervalMs])
+  }, [apiBase, fetcher, intervalMs, jobId])
 
   return { status, loading, done }
 }

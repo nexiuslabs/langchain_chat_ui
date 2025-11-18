@@ -1,8 +1,7 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -193,7 +192,6 @@ function DiagnosticControls() {
 }
 
 export function AppShell(): React.ReactNode {
-  const pathname = usePathname();
   const { data: session } = useSession();
   const email = (session as any)?.user?.email as string | undefined;
   const sessionTenantId = (session as any)?.tenantId as string | undefined;

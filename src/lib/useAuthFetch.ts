@@ -47,7 +47,6 @@ export function useAuthFetch() {
       ? (urlStr.startsWith(apiUrlEnv) ? apiUrlEnv : (urlStr.startsWith(apiBaseEnv) ? apiBaseEnv : ''))
       : '';
     const isLangGraph = targetBase && targetBase === apiUrlEnv;
-    const isBackend = targetBase && targetBase === apiBaseEnv;
     // Prefer cookie-mode auth for LangGraph to allow /auth/refresh to rotate cookies mid-stream
     const hasAccessCookie = hasCookie(process.env.NEXT_PUBLIC_ACCESS_COOKIE_NAME || "nx_access");
     // Include Authorization header unless we're calling LangGraph and already have an nx_access cookie

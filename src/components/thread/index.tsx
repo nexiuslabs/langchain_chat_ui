@@ -1,9 +1,16 @@
 import { v4 as uuidv4 } from "uuid";
-import { ReactNode, useEffect, useRef } from "react";
+import {
+  FormEvent,
+  ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useStreamContext } from "@/providers/Stream";
-import { useState, FormEvent, useMemo } from "react";
 import { useSession } from "next-auth/react";
 import { Button } from "../ui/button";
 import { Checkpoint, Message } from "@langchain/langgraph-sdk";
@@ -24,7 +31,6 @@ import {
   SquarePen,
   XIcon,
   Plus,
-  CircleX,
 } from "lucide-react";
 import { useQueryState, parseAsBoolean } from "nuqs";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
@@ -34,12 +40,6 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { Label } from "../ui/label";
 import { Switch } from "../ui/switch";
 import dynamic from "next/dynamic";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "../ui/tooltip";
 import { useFileUpload } from "@/hooks/use-file-upload";
 import { ContentBlocksPreview } from "./ContentBlocksPreview";
 import {
@@ -151,7 +151,6 @@ export function Thread() {
     handleFileUpload,
     dropRef,
     removeBlock,
-    resetBlocks,
     dragOver,
     handlePaste,
   } = useFileUpload();
@@ -185,16 +184,19 @@ export function Thread() {
 
   const lastError = useRef<string | undefined>(undefined);
 
-  const setThreadId = (id: string | null) => {
-    _setThreadId(id);
+  const setThreadId = useCallback(
+    (id: string | null) => {
+      _setThreadId(id);
 
-    // close artifact and reset artifact context
-    closeArtifact();
-    setArtifactContext({});
-  };
+      // close artifact and reset artifact context
+      closeArtifact();
+      setArtifactContext({});
+    },
+    [closeArtifact, setArtifactContext, _setThreadId],
+  );
 
   // Create a tenant-scoped thread when starting a new one to ensure proper metadata and isolation
-  const ensureTenantThread = async () => {
+  const ensureTenantThread = useCallback(async () => {
     if (threadId) return threadId;
     const tenant = tenantId || undefined;
     try {
@@ -212,7 +214,7 @@ export function Thread() {
       void e; // ignore and let useStream create one if needed
     }
     return null;
-  };
+  }, [assistantIdFromStream, setThreadId, streamClient, threadId, tenantId]);
 
   useEffect(() => {
     if (!stream.error) {
@@ -247,7 +249,7 @@ export function Thread() {
   useEffect(() => {
     if (threadId) return;
     void ensureTenantThread();
-  }, [threadId, assistantIdFromStream, tenantId]);
+  }, [threadId, ensureTenantThread]);
 
   // Auto-run a greeting immediately after a new thread is ready so the agent speaks first.
   useEffect(() => {
@@ -275,7 +277,6 @@ export function Thread() {
         context,
         messages: [...(prev.messages ?? []), ...(payload.messages || [])],
       }),
-      keepLatest: true,
     });
   }, [threadId, stream, stream.isLoading, tenantId]);
 
@@ -350,7 +351,6 @@ export function Thread() {
             newHumanMessage,
           ],
         }),
-        keepLatest: true,
       },
     );
 
