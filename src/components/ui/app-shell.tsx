@@ -1,8 +1,7 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -193,7 +192,6 @@ function DiagnosticControls() {
 }
 
 export function AppShell(): React.ReactNode {
-  const pathname = usePathname();
   const { data: session } = useSession();
   const email = (session as any)?.user?.email as string | undefined;
   const sessionTenantId = (session as any)?.tenantId as string | undefined;
@@ -284,26 +282,8 @@ export function AppShell(): React.ReactNode {
           <Link href="/" aria-label="Go to chat home" className="flex items-center gap-2">
             <span className="text-lg font-semibold tracking-tight">Agent Chat</span>
           </Link>
-          <nav aria-label="Primary" className="hidden sm:flex items-center gap-1">
-            {[
-              { href: "/", label: "Chat" },
-              { href: "/candidates", label: "Candidates" },
-              { href: "/metrics", label: "Metrics" },
-            ].map(({ href, label }) => (
-              <Link
-                key={href}
-                href={href}
-                aria-current={pathname === href ? "page" : undefined}
-                className={`text-sm px-3 py-1 rounded border ${
-                  pathname === href
-                    ? "bg-primary text-primary-foreground border-transparent"
-                    : "text-white/90 border-white/20 hover:bg-white/10"
-                }`}
-              >
-                {label}
-              </Link>
-            ))}
-          </nav>
+          {/* Primary navigation hidden per requirements */}
+          <nav aria-label="Primary" className="hidden" />
         </div>
 
         <div className="flex items-center gap-2">
