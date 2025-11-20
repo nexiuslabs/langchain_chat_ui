@@ -2,6 +2,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useStreamContext } from "@/providers/Stream";
 import { logEvent } from "@/lib/troubleshoot-logger";
+import { useAuthFetch } from "@/lib/useAuthFetch";
 
 type ProgressEvent = {
   id: string;
@@ -31,8 +32,18 @@ export function ChatProgressProvider({ children }: { children: React.ReactNode }
   const [events, setEvents] = useState<ProgressEvent[]>([]);
   const esRef = useRef<EventSource | null>(null);
   const seenSynthetic = useRef<Set<string>>(new Set());
+  const statusHistorySeen = useRef<Set<string>>(new Set());
+  const authFetch = useAuthFetch();
+  useEffect(() => {
+    statusHistorySeen.current.clear();
+    seenSynthetic.current.clear();
+  }, [sessionId]);
 
-  const clear = () => setEvents([]);
+  const clear = () => {
+    setEvents([]);
+    seenSynthetic.current.clear();
+    statusHistorySeen.current.clear();
+  };
 
   // Stable handlers
   const push = (label: string, payload: any) => {
@@ -40,13 +51,48 @@ export function ChatProgressProvider({ children }: { children: React.ReactNode }
       const data = typeof payload === "string" ? (() => { try { return JSON.parse(payload); } catch (_err) { return { message: String(payload) }; } })() : payload;
       const msg = typeof data?.message === "string" ? data.message : undefined;
       setEvents((prev) => {
-        const next = [...prev, { id: `${label}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`, label, message: msg, data, ts: Date.now() }];
+        const next = [
+          ...prev,
+          {
+            id: `${label}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+            label,
+            message: msg,
+            data,
+            ts: Date.now(),
+          },
+        ];
         // keep last 200
         return next.slice(-200);
       });
     } catch (_err) {
-      setEvents((prev) => [...prev, { id: `${label}:${Date.now()}`, label, message: String(payload), ts: Date.now() }].slice(-200));
+      setEvents((prev) =>
+        [...prev, { id: `${label}:${Date.now()}`, label, message: String(payload), ts: Date.now() }].slice(-200),
+      );
     }
+  };
+
+  const pushStatusHistory = (history: any) => {
+    const rows = Array.isArray(history) ? history : [];
+    if (!rows.length) return;
+    const additions: ProgressEvent[] = [];
+    for (const row of rows) {
+      if (!row) continue;
+      const phase = typeof row.phase === "string" ? row.phase : "status";
+      const message = typeof row.message === "string" ? row.message : undefined;
+      const stamp = typeof row.timestamp === "string" ? row.timestamp : `${Date.now()}`;
+      const key = `${phase}:${message || ""}:${stamp}`;
+      if (statusHistorySeen.current.has(key)) continue;
+      statusHistorySeen.current.add(key);
+      additions.push({
+        id: `status:${key}`,
+        label: `status:${phase}`,
+        message: message || phase,
+        data: row,
+        ts: Date.now(),
+      });
+    }
+    if (!additions.length) return;
+    setEvents((prev) => [...prev, ...additions].slice(-200));
   };
 
   useEffect(() => {
@@ -108,6 +154,59 @@ export function ChatProgressProvider({ children }: { children: React.ReactNode }
       esRef.current = null;
     };
   }, [sessionId]);
+
+  useEffect(() => {
+    const base =
+      (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.replace(/\/$/, "")) ||
+      (process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, ""));
+    if (!sessionId || !base) return;
+    let cancelled = false;
+    let timer: NodeJS.Timeout | null = null;
+    const intervalMs = (() => {
+      const raw = process.env.NEXT_PUBLIC_ORCH_POLL_MS;
+      const parsed = raw ? Number(raw) : NaN;
+      if (!Number.isFinite(parsed) || parsed <= 0) return 4000;
+      return parsed;
+    })();
+    const poll = async () => {
+      try {
+        const url = `${base}/api/orchestrations/${encodeURIComponent(sessionId)}`;
+        const res = await authFetch(url);
+        if (res.ok) {
+          const body = await res.json().catch(() => null);
+          if (body?.status_history) pushStatusHistory(body.status_history);
+        } else if (res.status !== 404) {
+          logEvent({
+            level: "warn",
+            message: "Orchestrator status poll failed",
+            component: "ChatProgress.poll",
+            route: "/api/orchestrations/:thread_id",
+            http: { status: res.status },
+          });
+        }
+      } catch (err: any) {
+        logEvent({
+          level: "error",
+          message: err?.message || "Orchestrator status poll error",
+          component: "ChatProgress.poll",
+          error: {
+            type: err?.name || "StatusPollError",
+            message: err?.message || String(err),
+            stack: String(err?.stack || "").split("\n").slice(0, 6),
+          },
+        });
+      } finally {
+        if (!cancelled) {
+          timer = setTimeout(poll, intervalMs);
+        }
+      }
+    };
+    poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [sessionId, authFetch]);
 
   // Synthesize progress from AI messages when backend SSE is not available in graph runs
   useEffect(() => {
