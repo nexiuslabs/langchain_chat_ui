@@ -158,7 +158,6 @@ export function Thread() {
   const ttfbStartRef = useRef<number | null>(null);
   const ttfbSentRef = useRef<boolean>(false);
   const isLargeScreen = useMediaQuery("(min-width: 1024px)");
-  const greetedThreadsRef = useRef<Set<string>>(new Set());
   const messageSnapshotsRef = useRef<Map<string, Message[]>>(new Map());
 
   const stream = useStreamContext();
@@ -250,35 +249,6 @@ export function Thread() {
     if (threadId) return;
     void ensureTenantThread();
   }, [threadId, ensureTenantThread]);
-
-  // Auto-run a greeting immediately after a new thread is ready so the agent speaks first.
-  useEffect(() => {
-    if (!threadId) return;
-    if (!stream || typeof stream.submit !== "function") return;
-    if (stream.isLoading) return;
-    if (greetedThreadsRef.current.has(threadId)) return;
-
-    greetedThreadsRef.current.add(threadId);
-    const context =
-      tenantId && tenantId.trim().length > 0 ? { tenant_id: tenantId } : undefined;
-    const payload: any = {};
-    if (context) payload.context = context;
-    payload.messages = [
-      {
-        id: uuidv4(),
-        type: "human",
-        content: [{ type: "text", text: "" }],
-      },
-    ];
-    stream.submit(payload, {
-      streamMode: ["values"],
-      optimisticValues: (prev) => ({
-        ...prev,
-        context,
-        messages: [...(prev.messages ?? []), ...(payload.messages || [])],
-      }),
-    });
-  }, [threadId, stream, stream.isLoading, tenantId]);
 
   // TODO: this should be part of the useStream hook
   const prevMessageLength = useRef(0);
@@ -558,6 +528,25 @@ export function Thread() {
                       finalList.push(item);
                     }
                     // 4) Render final merged conversation
+                    if (finalList.length === 0) {
+                      return (
+                        <AssistantMessage
+                          key="default-greeting"
+                          message={{
+                            id: "default-greeting",
+                            type: "ai",
+                            content: [
+                              {
+                                type: "text",
+                                text: "Hi! I can help capture your ICP, run discovery, and enrich candidate companies. Share your website plus a few best-customer examples so I can start profiling and move into discovery/enrichment.",
+                              },
+                            ],
+                          }}
+                          isLoading={false}
+                          handleRegenerate={handleRegenerate}
+                        />
+                      );
+                    }
                     return finalList.map(({ m, i }) =>
                       m.type === "human" ? (
                         <HumanMessage key={m.id || `${m.type}-${i}`} message={m} isLoading={isLoading} />

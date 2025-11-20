@@ -58,6 +58,8 @@ function getDispatcher(): any | undefined {
 
 type Params = { _path: string[] };
 
+const LANGGRAPH_PREFIXES = new Set(["threads", "assistants", "deployments", "runs", "schemas", "assets"]);
+
 async function segmentsFromContext(ctx: any): Promise<string[]> {
   try {
     const p = ctx?.params;
@@ -72,8 +74,17 @@ async function segmentsFromContext(ctx: any): Promise<string[]> {
   }
 }
 
+function resolveBackendBase(firstSegment: string | undefined): string {
+  const langgraphBase = process.env.LANGGRAPH_API_URL;
+  const fastapiBase = process.env.FASTAPI_API_URL || process.env.NEXT_PUBLIC_API_URL || langgraphBase || "";
+  if (firstSegment && LANGGRAPH_PREFIXES.has(firstSegment.toLowerCase())) {
+    return langgraphBase || fastapiBase;
+  }
+  return fastapiBase;
+}
+
 function targetUrlFromSegments(req: Request, segments: string[]): string {
-  const base = process.env.LANGGRAPH_API_URL || process.env.NEXT_PUBLIC_API_URL || "";
+  const base = resolveBackendBase((segments || [])[0]);
   const url = new URL(base);
   const basePath = url.pathname.endsWith("/") ? url.pathname : url.pathname + "/";
   url.pathname = basePath + (segments || []).join("/");

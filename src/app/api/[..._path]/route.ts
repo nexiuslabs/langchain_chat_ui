@@ -52,10 +52,22 @@ function getDispatcher(): any | undefined {
   } catch (_err) { return undefined; }
 }
 
+const LANGGRAPH_PREFIXES = new Set(["threads", "assistants", "deployments", "runs", "schemas", "assets"]);
+
+function resolveBaseUrl(firstSegment: string | undefined): string {
+  const langgraphBase = process.env.LANGGRAPH_API_URL;
+  const fastapiBase = process.env.FASTAPI_API_URL || process.env.NEXT_PUBLIC_API_URL || langgraphBase || "";
+  if (firstSegment && LANGGRAPH_PREFIXES.has(firstSegment.toLowerCase())) {
+    return langgraphBase || fastapiBase;
+  }
+  return fastapiBase;
+}
+
 async function targetUrl(req: Request, params: Promise<Params> | Params): Promise<string> {
   const { _path } = await params;
-  const base = process.env.LANGGRAPH_API_URL || process.env.NEXT_PUBLIC_API_URL || "";
-  const path = (_path || []).join("/");
+  const segments = _path || [];
+  const path = segments.join("/");
+  const base = resolveBaseUrl(segments[0]);
   const url = new URL(base);
   // Ensure trailing slash once
   const basePath = url.pathname.endsWith("/") ? url.pathname : url.pathname + "/";
