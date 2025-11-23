@@ -311,7 +311,7 @@ export function Thread() {
     stream.submit(
       { messages: newHumanMessage, context },
       {
-        streamMode: ["values"],
+        streamMode: ["messages"],
         optimisticValues: (prev) => ({
           ...prev,
           context,
@@ -336,7 +336,7 @@ export function Thread() {
     setFirstTokenReceived(false);
     stream.submit(undefined, {
       checkpoint: parentCheckpoint,
-      streamMode: ["values"],
+      streamMode: ["messages"],
     });
   };
 
@@ -510,25 +510,48 @@ export function Thread() {
                     });
                     // 3) Deduplicate by messageId (preferred), else by role+text
                     const seenIds = new Set<string>();
-                    const seenRoleText = new Set<string>();
                     const roleOf = (t: string) => (t === "human" ? "user" : t === "ai" ? "assistant" : t);
                     const finalList = [] as typeof enriched;
                     for (const item of enriched) {
                       const { m, meta } = item;
                       const contentText = getContentString((m as any).content ?? "");
-                      const rtKey = `${roleOf(m.type)}|${contentText}`;
-                      if (seenRoleText.has(rtKey)) continue;
+                      const trimmedText = contentText.trim();
+                      if (m.type === "ai") {
+                        const looksLikeJson =
+                          trimmedText.startsWith("{") || trimmedText.startsWith("[");
+                        const hasStateKeys =
+                          trimmedText.includes("company_profile_confirmed") ||
+                          trimmedText.includes("icp_profile_confirmed");
+                        const isTruncatedJson =
+                          (trimmedText.startsWith("{") && !trimmedText.endsWith("}")) ||
+                          (trimmedText.startsWith("[") && !trimmedText.endsWith("]"));
+                        if (
+                          looksLikeJson &&
+                          (hasStateKeys || trimmedText.startsWith('{"message"') || isTruncatedJson)
+                        ) {
+                          continue;
+                        }
+                      }
                       const msgId = (meta?.messageId as string | undefined) || (m.id as string | undefined) || undefined;
                       if (msgId) {
                         const key = `id:${msgId}`;
                         if (seenIds.has(key)) continue;
                         seenIds.add(key);
                       }
-                      seenRoleText.add(rtKey);
                       finalList.push(item);
                     }
+                    // Collapse consecutive duplicates (same role + text) to avoid repeated prompts
+                    const deduped: typeof finalList = [];
+                    let prevKey: string | null = null;
+                    for (const item of finalList) {
+                      const key = `${item.m.type}|${getContentString((item.m as any).content ?? "")}`.trim();
+                      if (key === prevKey) continue;
+                      prevKey = key;
+                      deduped.push(item);
+                    }
+                    const listToRender = deduped;
                     // 4) Render final merged conversation
-                    if (finalList.length === 0) {
+                    if (listToRender.length === 0) {
                       return (
                         <AssistantMessage
                           key="default-greeting"
@@ -547,7 +570,7 @@ export function Thread() {
                         />
                       );
                     }
-                    return finalList.map(({ m, i }) =>
+                    return listToRender.map(({ m, i }) =>
                       m.type === "human" ? (
                         <HumanMessage key={m.id || `${m.type}-${i}`} message={m} isLoading={isLoading} />
                       ) : (

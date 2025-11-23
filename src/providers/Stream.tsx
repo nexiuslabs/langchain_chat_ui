@@ -153,6 +153,7 @@ const StreamSession = ({
     apiKey: apiKey ?? undefined,
     assistantId,
     threadId: threadId ?? null,
+    streamMode: ["messages"],
     defaultHeaders: {
       ...(effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : {}),
       ...(process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_USE_AUTH_HEADER === 'true' && idToken ? { Authorization: `Bearer ${idToken}` } : {}),
