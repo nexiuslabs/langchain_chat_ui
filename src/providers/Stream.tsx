@@ -145,6 +145,26 @@ const StreamSession = ({
       }
     })();
 
+    // Patch existing thread metadata with tenant before any run
+    (async () => {
+      try {
+        if (!threadId) return;
+        if (!effectiveTenantId) return;
+        const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
+        const base = useProxy ? "/api" : apiUrl;
+        await fetch(`${base}/threads/${threadId}`, {
+          method: "PATCH",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            ...(effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : {}),
+            ...(process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_USE_AUTH_HEADER === 'true' && idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+          },
+          body: JSON.stringify({ metadata: { tenant_id: effectiveTenantId } }),
+        }).catch(() => {});
+      } catch (_e) { /* ignore */ }
+    })();
+
     if (precreatedRef.current) return;
     if (threadId) return; // already have a thread
     if (!assistantId) return;
@@ -170,6 +190,11 @@ const StreamSession = ({
     assistantId,
     threadId: threadId ?? null,
     streamMode: ["messages"],
+    // Some SDK versions accept `configurable` at top-level; include it to
+    // maximize compatibility in addition to `config.configurable` below.
+    configurable: (effectiveTenantId
+      ? { tenant_id: effectiveTenantId }
+      : undefined) as any,
     // Provide run config so LangGraph nodes can resolve tenant via
     // var_child_runnable_config and metadata/context.
     config: {

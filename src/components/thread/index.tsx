@@ -318,6 +318,8 @@ export function Thread() {
       { input: serializedInput, messages: newHumanMessage, context },
       {
         streamMode: ["messages"],
+        // Ensure tenant accompanies this run even if proxy injection fails
+        config: { configurable: { tenant_id: tenantId } } as any,
         optimisticValues: (prev) => ({
           ...prev,
           context,
@@ -347,6 +349,7 @@ export function Thread() {
   };
 
   const chatStarted = !!threadId || !!messages.length;
+  const canSend = !!tenantId;
   const hasNoAIOrToolMessages = !messages.find(
     (m) => m.type === "ai" || m.type === "tool",
   );
@@ -633,7 +636,17 @@ export function Thread() {
                     )}
                   >
                     <form
-                      onSubmit={handleSubmit}
+                      onSubmit={(e) => {
+                        if (!canSend) {
+                          e.preventDefault();
+                          toast.error("Tenant context not ready", {
+                            description:
+                              "Please sign in or wait a moment while we resolve your workspace.",
+                          });
+                          return;
+                        }
+                        handleSubmit(e);
+                      }}
                       className="mx-auto grid max-w-3xl grid-rows-[1fr_auto] gap-2"
                     >
                       <ContentBlocksPreview
@@ -659,6 +672,7 @@ export function Thread() {
                         }}
                         placeholder="Type your message..."
                         className="field-sizing-content resize-none border-none bg-transparent p-3.5 pb-0 shadow-none ring-0 outline-none focus:ring-0 focus:outline-none"
+                        disabled={!canSend}
                       />
 
                       <div className="flex items-center gap-6 p-2 pt-4">
@@ -709,7 +723,8 @@ export function Thread() {
                             className="ml-auto shadow-md transition-all"
                             disabled={
                               isLoading ||
-                              (!input.trim() && contentBlocks.length === 0)
+                              (!input.trim() && contentBlocks.length === 0) ||
+                              !canSend
                             }
                           >
                             Send
