@@ -122,6 +122,29 @@ const StreamSession = ({
   // Pre-create a tenant-scoped thread to ensure metadata is attached
   const precreatedRef = useRef(false);
   useEffect(() => {
+    // If a threadId is present from URL/history but no longer exists on the server,
+    // clear it so we can pre-create a fresh tenant-scoped thread below.
+    (async () => {
+      if (!threadId) return;
+      try {
+        const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
+        const base = useProxy ? "/api" : apiUrl;
+        const res = await fetch(`${base}/threads/${threadId}/history?limit=1`, {
+          credentials: "include",
+          headers: {
+            ...(effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : {}),
+            ...(process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_USE_AUTH_HEADER === 'true' && idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+          },
+        });
+        if (res.status === 404) {
+          // Stale thread – drop it to avoid racing runs on a missing thread
+          setThreadId(null);
+        }
+      } catch (_e) {
+        // ignore network errors; we'll proceed with current threadId
+      }
+    })();
+
     if (precreatedRef.current) return;
     if (threadId) return; // already have a thread
     if (!assistantId) return;
@@ -147,6 +170,15 @@ const StreamSession = ({
     assistantId,
     threadId: threadId ?? null,
     streamMode: ["messages"],
+    // Provide run config so LangGraph nodes can resolve tenant via
+    // var_child_runnable_config and metadata/context.
+    config: {
+      configurable: {
+        tenant_id: effectiveTenantId ?? undefined,
+        metadata: effectiveTenantId ? { tenant_id: effectiveTenantId } : undefined,
+        context: effectiveTenantId ? { tenant_id: effectiveTenantId } : undefined,
+      },
+    } as any,
     defaultHeaders: {
       ...(effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : {}),
       ...(process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_USE_AUTH_HEADER === 'true' && idToken ? { Authorization: `Bearer ${idToken}` } : {}),

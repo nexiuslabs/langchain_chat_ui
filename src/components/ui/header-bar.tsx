@@ -3,9 +3,11 @@
 import { useSession, signOut } from "next-auth/react";
 import React, { useEffect, useMemo, useState } from "react";
 import { useAuthFetch } from "@/lib/useAuthFetch";
+import { useTenant } from "@/providers/Tenant";
 
 export default function HeaderBar() {
   const { data: session } = useSession();
+  const { setTenantId } = useTenant();
   const email = (session as any)?.user?.email as string | undefined;
   const tenantId = (session as any)?.tenantId as string | undefined;
   const [emailOverride, setEmailOverride] = useState<string | null>(null);
@@ -66,11 +68,8 @@ export default function HeaderBar() {
         if (tid != null) {
           const tidStr = String(tid);
           setTenantIdOverride(tidStr);
-          try {
-            if (typeof window !== 'undefined' && !window.localStorage.getItem('lg:chat:tenantId')) {
-              window.localStorage.setItem('lg:chat:tenantId', tidStr);
-            }
-          } catch (e) { void e; }
+          // Update global tenant context immediately so StreamProvider picks it up
+          try { setTenantId(tidStr); } catch (_e) { void _e; }
         }
       } catch (e) { void e; }
     })();
