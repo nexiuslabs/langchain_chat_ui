@@ -3,6 +3,7 @@
 import React from "react";
 import { SessionProvider, useSession } from "next-auth/react";
 import ClientInit from "@/app/providers/ClientInit";
+import { TenantProvider } from "@/providers/Tenant";
 
 type Props = {
   children: React.ReactNode;
@@ -22,7 +23,9 @@ function SessionAwareInit({ children }: Props) {
 export default function AppProviders({ children }: Props) {
   return (
     <SessionProvider>
-      <SessionAwareInit>{children}</SessionAwareInit>
+      <TenantProvider>
+        <SessionAwareInit>{children}</SessionAwareInit>
+      </TenantProvider>
     </SessionProvider>
   );
 }

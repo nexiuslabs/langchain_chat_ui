@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback } from "react";
 import { useSession, signIn } from "next-auth/react";
 import { logEvent } from "@/lib/troubleshoot-logger";
 
@@ -7,8 +8,6 @@ export function useAuthFetch() {
   const { data: session } = useSession();
   const idToken = (session as any)?.idToken as string | undefined;
   const sessionTenantId = (session as any)?.tenantId as string | undefined;
-  // Prevent infinite refresh loops on persistent 401s
-  let didRefresh = false;
 
   function hasCookie(name: string): boolean {
     try {
@@ -24,7 +23,7 @@ export function useAuthFetch() {
     }
   }
 
-  function tenantOverride(): string | undefined {
+  const tenantOverride = useCallback((): string | undefined => {
     try {
       const v = typeof window !== 'undefined' ? window.localStorage.getItem("lg:chat:tenantId") : null;
       return v || sessionTenantId;
@@ -32,9 +31,10 @@ export function useAuthFetch() {
       void e;
       return sessionTenantId;
     }
-  }
+  }, [sessionTenantId]);
 
-  return async function authFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  return useCallback(async function authFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+    let didRefresh = false;
     const headers = new Headers(init.headers || {});
     const tid = tenantOverride();
     // Compute request URL and bases
@@ -149,5 +149,5 @@ export function useAuthFetch() {
       void signIn(undefined, { callbackUrl: "/" });
     }
     return res;
-  };
+  }, [idToken, tenantOverride]);
 }

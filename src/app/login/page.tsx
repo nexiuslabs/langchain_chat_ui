@@ -5,6 +5,7 @@ import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { useTenant } from "@/providers/Tenant";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -13,6 +14,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const apiBase = (process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001");
   const emailRef = useRef<HTMLInputElement | null>(null);
+  const { setTenantId } = useTenant();
 
   useEffect(() => { emailRef.current?.focus(); }, []);
 
@@ -30,11 +32,9 @@ export default function LoginPage() {
       if (res.ok) {
         try {
           const body = await res.json();
-          const tid = body?.tenant_id || null;
-          if (tid && typeof window !== 'undefined') {
-            try { window.localStorage.setItem('lg:chat:tenantId', String(tid)); } catch (_e) { /* ignore */ }
-          }
-        } catch (_e) { /* ignore */ }
+          const tid = body?.tenant_id;
+          setTenantId(tid ? String(tid) : null);
+        } catch (_e) { void _e; }
         window.location.href = "/";
         return;
       }

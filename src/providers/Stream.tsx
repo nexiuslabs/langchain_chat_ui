@@ -27,6 +27,7 @@ import { toast } from "sonner";
 import { useSession } from "next-auth/react";
 import { mergeThreadLists } from "@/lib/threadTenants";
 import { createClient } from "./client";
+import { useTenant } from "@/providers/Tenant";
 
 export type StateType = { messages: Message[]; ui?: UIMessage[] };
 
@@ -111,18 +112,10 @@ const StreamSession = ({
   const { data: session, status } = useSession();
   const idToken = (session as any)?.idToken as string | undefined;
   const sessionTenantId = (session as any)?.tenantId as string | undefined;
-  const [tenantOverride, setTenantOverride] = useState<string | null>(null);
+  const { tenantId: storedTenantId } = useTenant();
   const checkingRef = useRef(false);
   const toastShownRef = useRef(false);
-  // Read tenant override from localStorage when present (supports cookie-login scenario)
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const v = window.localStorage.getItem('lg:chat:tenantId');
-      if (v) setTenantOverride(v);
-    } catch (e) { void e; }
-  }, []);
-  const effectiveTenantId = tenantOverride || sessionTenantId;
+  const effectiveTenantId = storedTenantId || sessionTenantId || null;
   const [threadId, setThreadId] = useQueryState("threadId");
   const { getThreads, setThreads } = useThreads();
 
@@ -165,6 +158,79 @@ const StreamSession = ({
           return { ...prev, ui };
         });
       }
+      // Auto-enqueue background job via FastAPI when graph emits a queue_job event
+      try {
+        const ev: any = event as any;
+        if (ev && ev.type === "queue_job") {
+          const tid = ev.tenant_id || effectiveTenantId;
+          const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
+          const base = useProxy ? "/api/backend" : (process.env.NEXT_PUBLIC_API_URL || "");
+          fetch(`${base}/icp/enqueue/discovery-enrich`, {
+            method: "POST",
+            credentials: "include",
+            headers: {
+              "Content-Type": "application/json",
+              ...(tid ? { "X-Tenant-ID": String(tid) } : {}),
+            },
+            body: JSON.stringify(ev.payload || {}),
+          })
+            .then(async (resp) => {
+              const ok = resp.ok;
+              let jobId: string | number | undefined = undefined;
+              try {
+                const data = await resp.json().catch(() => ({}));
+                jobId = data?.job_id;
+              } catch (_e) { /* ignore */ }
+              // log outcome
+              try {
+                await fetch('/api/logs', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    level: ok ? 'info' : 'error',
+                    component: 'queue_job',
+                    message: ok ? 'Job enqueued' : 'Job enqueue failed',
+                    data: { job_id: jobId, tenant_id: tid },
+                    http: { status: resp.status },
+                  }),
+                });
+              } catch (_err) { /* ignore */ }
+              const msg = ok
+                ? `Queued background discovery and enrichment${jobId ? ` (job ${jobId})` : ""}. I’ll reply here when it’s done.`
+                : `I couldn’t queue the background job${resp.status ? ` (status ${resp.status})` : ""}. Please try again.`;
+              options.mutate((prev) => ({
+                ...prev,
+                messages: [
+                  ...(prev.messages ?? []),
+                  { type: "ai", content: msg } as any,
+                ],
+              }));
+            })
+            .catch(() => {
+              // log network error
+              try {
+                void fetch('/api/logs', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    level: 'error',
+                    component: 'queue_job',
+                    message: 'Network error enqueuing job',
+                    data: { tenant_id: tid },
+                  }),
+                });
+              } catch (_err2) { /* ignore */ }
+              const msg = `I couldn’t queue the background job due to a network error. Please try again.`;
+              options.mutate((prev) => ({
+                ...prev,
+                messages: [
+                  ...(prev.messages ?? []),
+                  { type: "ai", content: msg } as any,
+                ],
+              }));
+            });
+        }
+      } catch (_err) { /* ignore */ }
     },
     onThreadId: (id) => {
       setThreadId(id);

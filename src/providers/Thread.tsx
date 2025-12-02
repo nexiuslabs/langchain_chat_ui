@@ -19,6 +19,7 @@ import {
   scopeThreadsToTenant,
   writeTenantThreads,
 } from "@/lib/threadTenants";
+import { useTenant } from "@/providers/Tenant";
 
 interface ThreadContextType {
   getThreads: () => Promise<Thread[]>;
@@ -56,16 +57,8 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
   const [threadsLoading, setThreadsLoading] = useState(false);
   const { data: session } = useSession();
   const sessionTenantId = (session as any)?.tenantId as string | undefined;
-  const effectiveTenantId = (() => {
-    // Prefer explicit override in localStorage when present (set after cookie login)
-    try {
-      if (typeof window !== 'undefined') {
-        const v = window.localStorage.getItem('lg:chat:tenantId');
-        if (v) return v;
-      }
-    } catch (e) { void e; }
-    return sessionTenantId;
-  })();
+  const { tenantId: storedTenantId } = useTenant();
+  const effectiveTenantId = storedTenantId || sessionTenantId || null;
 
   const threads = useMemo(() => {
     // Fallback bucket when tenant is unknown so current thread can still show

@@ -112,9 +112,11 @@ async function forward(method: string, request: Request, segments: string[]) {
   const auth = request.headers.get("authorization");
   const tenant = request.headers.get("x-tenant-id");
   const cookie = request.headers.get("cookie");
+  const accept = request.headers.get("accept");
   if (auth) headers.set("authorization", auth);
   if (tenant) headers.set("x-tenant-id", tenant);
   if (cookie) headers.set("cookie", cookie);
+  if (accept) headers.set("accept", accept);
   const ct = request.headers.get("content-type");
   if (ct) headers.set("content-type", ct);
   const apiKey = process.env.LANGSMITH_API_KEY;
@@ -134,29 +136,47 @@ async function forward(method: string, request: Request, segments: string[]) {
     const d = getDispatcher();
     if (d) (init as any).dispatcher = d;
   } catch (_err) { /* ignore */ }
+  // Ensure Accept header is text/event-stream for run streaming endpoints
+  try {
+    const isRunStart = segments.length >= 3 && segments[0] === "threads" && (segments[2] as string).startsWith("runs");
+    const isStream = isRunStart && ((segments[2] === "runs" && segments[3] === "stream") || segments[2] === "runs/stream");
+    if (isStream) {
+      headers.set("accept", "text/event-stream");
+    }
+  } catch (_e) {
+    /* ignore */
+  }
+
   try {
     if (method !== "GET" && method !== "HEAD") {
       const bodyText = await request.text();
       let finalBody = bodyText;
-      // Inject a session_id derived from thread_id for run-start APIs so backend can bind SSE
       try {
         // Expect segments like: ["threads", "<thread_id>", "runs", ("stream")?]
         const isRunStart = segments.length >= 3 && segments[0] === "threads" && segments[2].startsWith("runs");
-        if (isRunStart && bodyText && bodyText.trim().startsWith("{")) {
-          const threadId = segments[1];
-          const payload: any = JSON.parse(bodyText);
+        const isStream = isRunStart && (segments[2] === "runs" && segments[3] === "stream" || segments[2] === "runs/stream");
+        const looksJson = !!bodyText && bodyText.trim().startsWith("{");
+        const threadId = segments[1];
+      const payload: any = looksJson ? JSON.parse(bodyText) : undefined;
+        // Inject session_id for binding and pass tenant_id into context
+        if (isRunStart && looksJson && payload) {
           const input = (payload?.input && typeof payload.input === "object") ? payload.input : (typeof payload === "object" ? payload : {});
-          // Place session_id in multiple places for maximum compatibility
           input.session_id = input.session_id || threadId;
           payload.input = input;
           payload.session_id = payload.session_id || threadId;
-          payload.context = { ...(payload.context || {}), session_id: threadId };
+          const tidHeader = request.headers.get("x-tenant-id");
+          payload.context = {
+            ...(payload.context || {}),
+            session_id: threadId,
+            ...(tidHeader ? { tenant_id: tidHeader } : {}),
+          };
+        }
+        // Do not block empty payloads; graph may resume from checkpoint.
+        if (isRunStart && looksJson && payload) {
           finalBody = JSON.stringify(payload);
-          // Ensure JSON content-type
           headers.set("content-type", "application/json");
         }
-      } catch (e) {
-        // On any parsing error, fall back to original body
+      } catch (_e) {
         finalBody = bodyText;
       }
       init.body = finalBody;
@@ -176,7 +196,10 @@ async function forward(method: string, request: Request, segments: string[]) {
           status: resp.status,
           duration_ms: Date.now() - started,
         });
-        return new Response(resp.body as any, { status: resp.status, headers: resp.headers as any });
+        const rawHeaders = resp.headers as any;
+        const headersOut = new Headers(rawHeaders);
+        headersOut.delete("content-length");
+        return new Response(resp.body as any, { status: resp.status, headers: headersOut });
       }
     } catch (_err) {
       /* fall back to global fetch */
@@ -190,7 +213,9 @@ async function forward(method: string, request: Request, segments: string[]) {
       status: resp.status,
       duration_ms: Date.now() - started,
     });
-    return new Response(resp.body, { status: resp.status, headers: resp.headers });
+    const headersOut = new Headers(resp.headers);
+    headersOut.delete("content-length");
+    return new Response(resp.body, { status: resp.status, headers: headersOut });
   } catch (error: any) {
     logProxyActivity({
       scope: "backend",

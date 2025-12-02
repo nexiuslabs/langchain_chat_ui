@@ -48,6 +48,7 @@ import {
   ArtifactTitle,
   useArtifactContext,
 } from "./artifact";
+import { useTenant } from "@/providers/Tenant";
 
 const ChatProgressFeed = dynamic(
   () => import("./ChatProgressFeed").then((m) => m.ChatProgressFeed),
@@ -123,15 +124,8 @@ function ScrollToBottom(props: { className?: string }) {
 export function Thread() {
   const { data: session } = useSession();
   const sessionTenantId = (session as any)?.tenantId as string | undefined;
-  const tenantId = useMemo(() => {
-    try {
-      if (typeof window !== "undefined") {
-        const v = window.localStorage.getItem("lg:chat:tenantId");
-        if (v) return v;
-      }
-    } catch (e) { void e; }
-    return sessionTenantId;
-  }, [sessionTenantId]);
+  const { tenantId: storedTenantId } = useTenant();
+  const tenantId = storedTenantId || sessionTenantId;
   const [artifactContext, setArtifactContext] = useArtifactContext();
   const [artifactOpen, closeArtifact] = useArtifactOpen();
 
@@ -308,8 +302,20 @@ export function Thread() {
       await new Promise((r) => setTimeout(r, 25));
     }
     // Send only the new human message to the server; keep tool responses client-side for UI stability
+    const attachmentSummary = contentBlocks
+      .map((block, idx) => {
+        if (!block) return null;
+        if ((block as any).text) return (block as any).text as string;
+        if ((block as any).image_url?.url) return `Image: ${(block as any).image_url.url}`;
+        if ((block as any).file_url?.url) return `File: ${(block as any).file_url.url}`;
+        return `Attachment ${idx + 1}`;
+      })
+      .filter(Boolean)
+      .join("\n");
+    const serializedInput = [input.trim(), attachmentSummary].filter(Boolean).join("\n\n") || "(attachment)";
+
     stream.submit(
-      { messages: newHumanMessage, context },
+      { input: serializedInput, messages: newHumanMessage, context },
       {
         streamMode: ["messages"],
         optimisticValues: (prev) => ({

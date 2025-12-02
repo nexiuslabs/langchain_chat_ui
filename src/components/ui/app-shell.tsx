@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSession, signOut } from "next-auth/react";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,8 @@ import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuthFetch } from "@/lib/useAuthFetch";
+import { useTenant } from "@/providers/Tenant";
+import { logEvent } from "@/lib/troubleshoot-logger";
 
 function useConnectionStatus() {
   const [ok, setOk] = useState<boolean | null>(null);
@@ -97,26 +99,40 @@ function VerifyOdoo({ apiBase, authFetch }: { apiBase: string; authFetch: Return
   );
 }
 
-function TenantOverride({ enabled, apiBase, authFetch }: { enabled: boolean; apiBase: string; authFetch: ReturnType<typeof useAuthFetch> }) {
-  const [override, setOverride] = useState("");
-  const [hasOverride, setHasOverride] = useState(false);
+function TenantOverride({ enabled }: { enabled: boolean }) {
+  const { tenantId, setTenantId } = useTenant();
+  const [override, setOverride] = useState(tenantId ?? "");
   useEffect(() => {
-    try {
-      if (typeof window !== "undefined") {
-        const v = window.localStorage.getItem("lg:chat:tenantId");
-        if (v) { setOverride(v); setHasOverride(true); }
-      }
-    } catch (_err) { /* noop */ }
-  }, []);
+    setOverride(tenantId ?? "");
+  }, [tenantId]);
   if (!enabled) return null;
+  const hasOverride = Boolean(tenantId);
+  const apply = () => {
+    setTenantId(override && override.trim().length ? override.trim() : null);
+    window.location.reload();
+  };
+  const clear = () => {
+    setTenantId(null);
+    window.location.reload();
+  };
   return (
     <div className="grid gap-2">
       <Label htmlFor="tenantOverride">Tenant override</Label>
       <div className="flex gap-2 items-end">
-        <Input id="tenantOverride" className="flex-1" placeholder="tenant override" value={override} onChange={(e) => setOverride(e.target.value)} />
-        <Button variant="secondary" onClick={() => { try { window.localStorage.setItem("lg:chat:tenantId", override); window.location.reload(); } catch (_e) { /* ignore */ } }}>Use</Button>
+        <Input
+          id="tenantOverride"
+          className="flex-1"
+          placeholder="tenant override"
+          value={override}
+          onChange={(e) => setOverride(e.target.value)}
+        />
+        <Button variant="secondary" onClick={apply} disabled={!override.trim().length}>
+          Use
+        </Button>
         {hasOverride && (
-          <Button variant="destructive" onClick={() => { try { window.localStorage.removeItem("lg:chat:tenantId"); window.location.reload(); } catch (_e) { /* ignore */ } }}>Clear</Button>
+          <Button variant="destructive" onClick={clear}>
+            Clear
+          </Button>
         )}
       </div>
       <p className="text-xs text-muted-foreground">Overrides current tenant for thread-scoped operations.</p>
@@ -192,11 +208,11 @@ function DiagnosticControls() {
 }
 
 export function AppShell(): React.ReactNode {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const email = (session as any)?.user?.email as string | undefined;
   const sessionTenantId = (session as any)?.tenantId as string | undefined;
+  const { tenantId: storedTenantId, setTenantId } = useTenant();
   const [emailFallback, setEmailFallback] = useState<string | null>(null);
-  const [tenantIdOverride, setTenantIdOverride] = useState<string | null>(null);
   const authFetch = useAuthFetch();
   const apiBase = useMemo(
     () =>
@@ -209,10 +225,12 @@ export function AppShell(): React.ReactNode {
   const issuerFromSession = (session as any)?.issuer as string | undefined;
   const nextauthUrlFromSession = (session as any)?.nextauthUrl as string | undefined;
   const clientIdFromSession = (session as any)?.clientId as string | undefined;
+  const tenantDisplayId = sessionTenantId || storedTenantId || null;
+  const tenantFetchRef = useRef(false);
 
   const globalSignOut = async () => {
     try { await signOut({ redirect: false }); } catch (_e) { /* ignore */ }
-    try { if (typeof window !== 'undefined') window.localStorage.removeItem('lg:chat:tenantId'); } catch (_e) { /* ignore */ }
+    setTenantId(null);
     try {
       const issuer = issuerFromSession || process.env.NEXT_PUBLIC_NEXIUS_ISSUER || "";
       const base = issuer.replace(/\/+$/, "");
@@ -230,50 +248,55 @@ export function AppShell(): React.ReactNode {
 
   const enableTenantSwitcher = (process.env.NEXT_PUBLIC_ENABLE_TENANT_SWITCHER || "").toLowerCase() === "true";
 
-  // Fallback identity when NextAuth session is not set (cookie login path)
+  // Resolve tenant + fallback identity when not provided by NextAuth session
   useEffect(() => {
     let cancelled = false;
-    if (email) {
-      setEmailFallback(null);
-      return;
-    }
+    if (status === "loading") return;
+    if (storedTenantId && (email || emailFallback)) return;
+    if (tenantFetchRef.current && storedTenantId) return;
+    tenantFetchRef.current = true;
     (async () => {
       try {
-        // Try strict whoami first
-        let res = await authFetch(`${apiBase}/whoami`);
-        if (!res.ok) {
-          // Fallback to optional identity when tenant claim is missing
-          res = await authFetch(`${apiBase}/session/odoo_info`);
+        logEvent({ level: "info", message: "Fetching tenant via /session/odoo_info", component: "AppShell" });
+        const res = await authFetch(`${apiBase}/session/odoo_info`);
+        if (res.ok) {
+          const body = await res.json();
+          if (cancelled) return;
+          const tid = body?.tenant_id ?? body?.odoo?.tenant_id ?? null;
+          if (tid != null) {
+            logEvent({ level: "info", message: "Resolved tenant from /session/odoo_info", component: "AppShell", data: { tenant_id: tid } });
+            setTenantId(String(tid));
+          }
+          const em = body?.email || body?.user?.email;
+          if (!email && em) setEmailFallback(String(em));
+          return;
         }
-        if (!res.ok) return;
-        const j = await res.json();
-        if (cancelled) return;
-        const em = j?.email || j?.user?.email;
-        const tid = j?.tenant_id ?? (j?.odoo?.tenant_id ?? null);
-        if (em) setEmailFallback(String(em));
-        if (tid != null) {
-          const tidStr = String(tid);
-          setTenantIdOverride(tidStr);
-          try {
-            if (typeof window !== 'undefined' && !window.localStorage.getItem('lg:chat:tenantId')) {
-              window.localStorage.setItem('lg:chat:tenantId', tidStr);
-            }
-          } catch (e) { void e; }
-        }
-      } catch (e) { void e; }
-    })();
-    return () => { cancelled = true; };
-  }, [email, apiBase, authFetch]);
-
-  // Initialize tenant override from localStorage (for cookie-login or persisted override)
-  useEffect(() => {
-    try {
-      if (typeof window !== 'undefined') {
-        const v = window.localStorage.getItem('lg:chat:tenantId');
-        if (v) setTenantIdOverride(v);
+        logEvent({ level: "warn", message: "session/odoo_info unavailable", component: "AppShell", data: { status: res.status } });
+      } catch (err) {
+        logEvent({ level: "error", message: "session/odoo_info fetch failed", component: "AppShell", error: err as Error });
       }
-    } catch (e) { void e; }
-  }, []);
+      if (email) return;
+      try {
+        const who = await authFetch(`${apiBase}/whoami`);
+        if (!who.ok) {
+          logEvent({ level: "warn", message: "whoami fallback failed", component: "AppShell", data: { status: who.status } });
+          return;
+        }
+        const body = await who.json();
+        if (cancelled) return;
+        if (body?.email) setEmailFallback(String(body.email));
+        if (body?.tenant_id != null) {
+          setTenantId(String(body.tenant_id));
+          logEvent({ level: "info", message: "Resolved tenant from whoami", component: "AppShell", data: { tenant_id: body.tenant_id } });
+        }
+      } catch (err) {
+        logEvent({ level: "error", message: "whoami fetch failed", component: "AppShell", error: err as Error });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [status, storedTenantId, email, emailFallback, apiBase, authFetch, setTenantId]);
 
   return (
     <div className="w-full bg-brand-navy text-white">
@@ -300,8 +323,8 @@ export function AppShell(): React.ReactNode {
                 <div className="grid gap-1">
                   <p className="text-sm text-muted-foreground">Signed in as</p>
                   <p className="text-sm font-medium break-all text-foreground">{email || emailFallback || "Authenticating…"}</p>
-                  { (sessionTenantId || tenantIdOverride) && (
-                    <p className="text-xs text-muted-foreground">Tenant: <span className="text-foreground">{sessionTenantId || tenantIdOverride}</span></p>
+                  { tenantDisplayId && (
+                    <p className="text-xs text-muted-foreground">Tenant: <span className="text-foreground">{tenantDisplayId}</span></p>
                   )}
                 </div>
                 <Separator />
@@ -316,7 +339,7 @@ export function AppShell(): React.ReactNode {
                   <VerifyOdoo apiBase={apiBase} authFetch={authFetch} />
                 </div>
                 <Separator />
-                <TenantOverride enabled={enableTenantSwitcher} apiBase={apiBase} authFetch={authFetch} />
+                <TenantOverride enabled={enableTenantSwitcher} />
                 <Separator />
                 <DiagnosticControls />
                 <Separator />

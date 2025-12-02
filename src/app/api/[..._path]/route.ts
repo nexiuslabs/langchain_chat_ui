@@ -98,9 +98,12 @@ async function forward(method: string, request: Request, params: Promise<Params>
   const auth = request.headers.get("authorization");
   const tenant = request.headers.get("x-tenant-id");
   const cookie = request.headers.get("cookie");
+  const accept = request.headers.get("accept");
   if (auth) headers.set("authorization", auth);
   if (tenant) headers.set("x-tenant-id", tenant);
   if (cookie) headers.set("cookie", cookie);
+  if (accept) headers.set("accept", accept);
+  // Do not forward accept-encoding to avoid compressing SSE
   // Content negotiation
   const ct = request.headers.get("content-type");
   if (ct) headers.set("content-type", ct);
@@ -120,13 +123,56 @@ async function forward(method: string, request: Request, params: Promise<Params>
     const d = getDispatcher();
     if (d) (init as any).dispatcher = d;
   } catch (_err) { /* ignore */ }
+  // Detect run stream path to ensure Accept header is SSE
+  let isRunStart = false;
+  let isStream = false;
   try {
-    if (method !== "GET" && method !== "HEAD") {
-      // Read fully to avoid body locking issues on edge runtime
-      const bodyText = await request.text();
-      init.body = bodyText;
-      (init as any).duplex = "half";
+    const segs = await params;
+    const segments = (segs as any)?._path || [];
+    isRunStart = segments.length >= 3 && segments[0] === "threads" && (segments[2] as string).startsWith("runs");
+    isStream = isRunStart && ((segments[2] === "runs" && segments[3] === "stream") || segments[2] === "runs/stream");
+  } catch (_e) {
+    /* ignore */
+  }
+  if (isStream) {
+    headers.set("accept", "text/event-stream");
+  }
+
+  try {
+  if (method !== "GET" && method !== "HEAD") {
+    // Read fully to avoid body locking issues on edge runtime
+    const bodyText = await request.text();
+    let finalBody = bodyText;
+    try {
+      const segs = await params;
+      const segments = (segs as any)?._path || [];
+      const isRunStart = segments.length >= 3 && segments[0] === "threads" && (segments[2] as string).startsWith("runs");
+      const isStream = isRunStart && ((segments[2] === "runs" && segments[3] === "stream") || segments[2] === "runs/stream");
+      const looksJson = !!bodyText && bodyText.trim().startsWith("{");
+      const threadId = segments[1];
+      const payload: any = looksJson ? JSON.parse(bodyText) : undefined;
+      // Allow empty payloads to pass through; the graph may intentionally resume from checkpoint.
+      // Inject a session_id derived from thread_id for run-start APIs so backend can bind SSE
+      if (isRunStart && looksJson && payload) {
+        const input = (payload?.input && typeof payload.input === "object") ? payload.input : (typeof payload === "object" ? payload : {});
+        input.session_id = input.session_id || threadId;
+        payload.input = input;
+        payload.session_id = payload.session_id || threadId;
+        const tidHeader = request.headers.get("x-tenant-id");
+        payload.context = {
+          ...(payload.context || {}),
+          session_id: threadId,
+          ...(tidHeader ? { tenant_id: tidHeader } : {}),
+        };
+        finalBody = JSON.stringify(payload);
+        headers.set("content-type", "application/json");
+      }
+    } catch (_e) {
+      finalBody = bodyText;
     }
+    init.body = finalBody;
+    (init as any).duplex = "half";
+  }
     // Prefer undici.fetch with dispatcher when present to enforce our timeouts/connections
     try {
       const undiciFetch = __GLOBAL_UNDICI__?.undiciFetch as any;
@@ -141,9 +187,12 @@ async function forward(method: string, request: Request, params: Promise<Params>
           status: resp.status,
           duration_ms: Date.now() - started,
         });
+        const rawHeaders = resp.headers as any;
+        const headersOut = new Headers(rawHeaders);
+        headersOut.delete("content-length");
         return new Response(resp.body as any, {
           status: resp.status,
-          headers: resp.headers as any,
+          headers: headersOut,
         });
       }
     } catch (_err) {
@@ -158,10 +207,12 @@ async function forward(method: string, request: Request, params: Promise<Params>
       status: resp.status,
       duration_ms: Date.now() - started,
     });
-    // Stream response back
+    // Stream response back, but drop conflicting CL header
+    const headersOut = new Headers(resp.headers);
+    headersOut.delete("content-length");
     return new Response(resp.body, {
       status: resp.status,
-      headers: resp.headers,
+      headers: headersOut,
     });
   } catch (error: any) {
     logProxyActivity({
