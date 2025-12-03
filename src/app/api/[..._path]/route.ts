@@ -154,9 +154,13 @@ async function forward(method: string, request: Request, params: Promise<Params>
       // Allow empty payloads to pass through; the graph may intentionally resume from checkpoint.
       // Inject a session_id derived from thread_id for run-start APIs so backend can bind SSE
       if (isRunStart && looksJson && payload) {
-        const input = (payload?.input && typeof payload.input === "object") ? payload.input : (typeof payload === "object" ? payload : {});
-        input.session_id = input.session_id || threadId;
-        payload.input = input;
+        // Preserve user input if it's a primitive; only coerce when it's an object
+        const isPrimitiveInput = ["string", "number", "boolean"].includes(typeof payload.input);
+        if (!isPrimitiveInput) {
+          const input = (payload?.input && typeof payload.input === "object") ? payload.input : {};
+          (input as any).session_id = (input as any).session_id || threadId;
+          payload.input = input;
+        }
         payload.session_id = payload.session_id || threadId;
         const tidHeader = request.headers.get("x-tenant-id");
         payload.context = {

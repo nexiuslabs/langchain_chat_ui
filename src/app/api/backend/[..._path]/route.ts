@@ -160,9 +160,13 @@ async function forward(method: string, request: Request, segments: string[]) {
       const payload: any = looksJson ? JSON.parse(bodyText) : undefined;
         // Inject session_id for binding and pass tenant_id into context
         if (isRunStart && looksJson && payload) {
-          const input = (payload?.input && typeof payload.input === "object") ? payload.input : (typeof payload === "object" ? payload : {});
-          input.session_id = input.session_id || threadId;
-          payload.input = input;
+          // Preserve user input if it's a primitive (string/number/bool). Only coerce when it's an object.
+          const isPrimitiveInput = ["string", "number", "boolean"].includes(typeof payload.input);
+          if (!isPrimitiveInput) {
+            const input = (payload?.input && typeof payload.input === "object") ? payload.input : {};
+            (input as any).session_id = (input as any).session_id || threadId;
+            payload.input = input;
+          }
           payload.session_id = payload.session_id || threadId;
           const tidHeader = request.headers.get("x-tenant-id");
           payload.context = {
