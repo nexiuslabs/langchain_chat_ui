@@ -138,7 +138,7 @@ const StreamSession = ({
             ...(process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_USE_AUTH_HEADER === 'true' && idToken ? { Authorization: `Bearer ${idToken}` } : {}),
           },
         });
-        if (res.status === 404) {
+        if (res.status === 404 || res.status === 401) {
           // Stale thread – drop it to avoid racing runs on a missing thread
           setThreadId(null);
         }
@@ -182,11 +182,8 @@ const StreamSession = ({
     apiUrl,
     apiKey: apiKey ?? undefined,
     assistantId,
-    // Important: use global runs (threadId=null) so the SDK does not try to
-    // GET/POST /threads/{db_id}/history on the LangGraph server, which doesn't
-    // know about our DB thread IDs. We carry the DB thread id in our own SSE
-    // channel and payload context instead.
-    threadId: null,
+    // Bind runs to DB thread id; proxies will auto-create missing runtime threads
+    threadId: (threadId && threadId !== 'undefined' && threadId !== 'null') ? threadId : undefined,
     streamMode: ["messages"],
     defaultHeaders: {
       ...(effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : {}),

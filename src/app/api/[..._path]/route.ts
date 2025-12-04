@@ -99,7 +99,7 @@ function summarizeUrl(raw: string): string {
 async function forward(method: string, request: Request, params: Promise<Params> | Params) {
   await ensureUndiciConfigured();
   const { _path } = await params;
-  const segments = _path || [];
+  let segments = _path || [];
   // Guard against explicitly invalid thread IDs, but allow collection routes like GET /threads
   try {
     if ((segments?.[0] || "").toLowerCase() === "threads") {
@@ -112,6 +112,35 @@ async function forward(method: string, request: Request, params: Promise<Params>
       // If a subresource explicitly requires an id but none is present
       if (!seg1 && ["runs", "history"].includes(seg2)) {
         return new Response("thread_id is required", { status: 422, headers: { "content-type": "text/plain; charset=utf-8" } });
+      }
+      // Resolve runtime thread id from backend mapping and rewrite segments[1]
+      if (seg1) {
+        try {
+          const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
+          const backendBase = useProxy ? "/api/backend" : (process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || "");
+          if (backendBase) {
+            const url = `${(backendBase || '').replace(/\/$/, '')}/threads/${encodeURIComponent(seg1)}/runtime`;
+            const r = await fetch(url, {
+              method: 'GET',
+              headers: {
+                'accept': 'application/json',
+                // Propagate tenant header if present
+                ...(request.headers.get('x-tenant-id') ? { 'x-tenant-id': String(request.headers.get('x-tenant-id')) } : {}),
+                ...(request.headers.get('authorization') ? { 'authorization': String(request.headers.get('authorization')) } : {}),
+                // Include cookies so backend sees the session
+                ...(request.headers.get('cookie') ? { 'cookie': String(request.headers.get('cookie')) } : {}),
+              },
+              credentials: 'include' as any,
+            });
+            if (r.ok) {
+              const data = await r.json().catch(() => ({}));
+              const rid = data?.runtime_thread_id;
+              if (typeof rid === 'string' && rid) {
+                segments = [segments[0], rid, ...segments.slice(2)];
+              }
+            }
+          }
+        } catch { /* ignore and forward as-is */ }
       }
     }
   } catch (_e) { /* ignore */ }
@@ -245,7 +274,7 @@ async function forward(method: string, request: Request, params: Promise<Params>
       const isRuns = first === "threads" && (seg2 === "runs" || seg2 === "runs/stream" || seg2.startsWith("runs"));
       const isHistory = first === "threads" && seg2 === "history";
       if ((isRuns || isHistory) && resp.status === 404) {
-        // Best-effort create: POST /threads (LangGraph base) with explicit id
+        // Best-effort create: POST /threads (LangGraph base) with explicit thread_id
         const langgraphBase = process.env.NEXT_PUBLIC_API_URL || process.env.LANGGRAPH_API_URL || "";
         if (langgraphBase) {
           const createUrl = new URL(langgraphBase);
@@ -258,7 +287,8 @@ async function forward(method: string, request: Request, params: Promise<Params>
           const tenant = request.headers.get("x-tenant-id");
           if (tenant) headersCreate["x-tenant-id"] = tenant;
           try {
-            const cr = await fetch(createUrl.toString(), { method: "POST", headers: headersCreate, body: JSON.stringify({ id: tid }) });
+            // Many LangGraph servers accept `thread_id` for explicit IDs
+            const cr = await fetch(createUrl.toString(), { method: "POST", headers: headersCreate, body: JSON.stringify({ thread_id: tid }) });
             if (cr.ok) {
               // Retry original request once
               const retry = await fetch(url, init);
