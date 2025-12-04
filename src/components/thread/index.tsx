@@ -189,26 +189,31 @@ export function Thread() {
     [closeArtifact, setArtifactContext, _setThreadId],
   );
 
-  // Create a tenant-scoped thread when starting a new one to ensure proper metadata and isolation
+  // Create a tenant-scoped thread via FastAPI so DB-backed metadata persists
   const ensureTenantThread = useCallback(async () => {
-    if (threadId) return threadId;
+    if (threadId && threadId !== 'undefined' && threadId !== 'null') return threadId;
     const tenant = tenantId || undefined;
     try {
-      if (streamClient && assistantIdFromStream) {
-        const t = await streamClient.threads.create({
-          metadata: {
-            ...(tenant ? { tenant_id: tenant } : {}),
-          },
-          graphId: assistantIdFromStream,
-        });
-        setThreadId(t.thread_id);
-        return t.thread_id as string;
+      const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
+      const base = useProxy
+        ? "/api/backend"
+        : ((process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || ""));
+      const url = `${(base || "").replace(/\/$/, "")}/threads`;
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (tenant) headers["X-Tenant-ID"] = String(tenant);
+      const resp = await fetch(url, { method: 'POST', headers, credentials: 'include', body: JSON.stringify({}) });
+      if (!resp.ok) return null;
+      const data = await resp.json().catch(() => ({}));
+      const id = data?.id || data?.thread_id;
+      if (typeof id === 'string' && id) {
+        setThreadId(id);
+        return id;
       }
-    } catch (e) {
-      void e; // ignore and let useStream create one if needed
+    } catch (_e) {
+      /* ignore and let stream create if needed */
     }
     return null;
-  }, [assistantIdFromStream, setThreadId, streamClient, threadId, tenantId]);
+  }, [setThreadId, threadId, tenantId]);
 
   useEffect(() => {
     if (!stream.error) {
@@ -241,7 +246,7 @@ export function Thread() {
   // Auto-run a greeting as soon as a new thread is ready so the agent speaks before user input.
   // Proactively ensure a tenant-scoped thread exists as soon as possible.
   useEffect(() => {
-    if (threadId) return;
+    if (threadId && threadId !== 'undefined' && threadId !== 'null') return;
     void ensureTenantThread();
   }, [threadId, ensureTenantThread]);
 
@@ -276,7 +281,7 @@ export function Thread() {
 
   // After the first assistant summary for a thread, PATCH a human label
   useEffect(() => {
-    if (!threadId || !messages?.length) return;
+    if (!threadId || threadId === 'undefined' || threadId === 'null' || !messages?.length) return;
     if (renamedRef.current[threadId]) return;
     const firstAI = messages.find((m) => m.type === "ai");
     if (!firstAI) return;

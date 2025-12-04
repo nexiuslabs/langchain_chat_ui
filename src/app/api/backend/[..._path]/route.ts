@@ -113,6 +113,22 @@ function summarizeUrl(raw: string): string {
 
 async function forward(method: string, request: Request, segments: string[]) {
   await ensureUndiciConfigured();
+  // Guard against explicitly invalid thread IDs, but allow collection routes like GET /threads
+  try {
+    if ((segments?.[0] || "").toLowerCase() === "threads") {
+      const seg1 = (segments?.[1] || "").trim();
+      const seg2 = (segments?.[2] || "").trim().toLowerCase();
+      const isCollectionRoute = !seg1; // e.g., /threads
+      const requiresId = !!seg1 || ["runs", "history"].includes(seg2);
+      if (!isCollectionRoute && (seg1 === "undefined" || seg1 === "null")) {
+        return new Response("thread_id is required", { status: 422, headers: { "content-type": "text/plain; charset=utf-8" } });
+      }
+      // If a subresource explicitly requires an id but none is present
+      if (!seg1 && ["runs", "history"].includes(seg2)) {
+        return new Response("thread_id is required", { status: 422, headers: { "content-type": "text/plain; charset=utf-8" } });
+      }
+    }
+  } catch (_e) { /* ignore */ }
   const url = targetUrlFromSegments(request, segments);
   const logUrl = summarizeUrl(url);
   const started = Date.now();
@@ -226,6 +242,16 @@ async function forward(method: string, request: Request, segments: string[]) {
       status: resp.status,
       duration_ms: Date.now() - started,
     });
+    // Friendly error surface for stale thread on run stream
+    try {
+      const first = (segments?.[0] || "").toLowerCase();
+      const seg2 = (segments?.[2] || "").toLowerCase();
+      const isRuns = first === "threads" && (seg2 === "runs" || seg2 === "runs/stream" || seg2.startsWith("runs"));
+      if (isRuns && resp.status === 404) {
+        const msg = { error: "thread_missing", message: "Thread expired or missing. Start a new chat.", thread_id: segments?.[1] };
+        return new Response(JSON.stringify(msg), { status: 404, headers: { "content-type": "application/json" } });
+      }
+    } catch (_err) { /* ignore */ }
     const headersOut = new Headers(resp.headers);
     headersOut.delete("content-length");
     return new Response(resp.body, { status: resp.status, headers: headersOut });

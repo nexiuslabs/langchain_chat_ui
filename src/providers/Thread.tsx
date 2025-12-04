@@ -98,24 +98,50 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
 
   const getThreads = useCallback(async (): Promise<Thread[]> => {
     // Enforce tenant isolation: do not fetch when tenant is unknown
-    if (!apiUrl || !assistantId || !effectiveTenantId) return [];
-    const defaultHeaders = effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : undefined;
-    const client = createClient(clientBase, getApiKey() ?? undefined, defaultHeaders);
+    if (!effectiveTenantId) return [];
 
-    // Important: assistant/graph identifier must be top-level filters, not in metadata
-    const idFilter = getThreadSearchMetadata(assistantId);
-    const threads = await client.threads.search({
-      ...idFilter,
-      metadata: {
-        ...(effectiveTenantId ? { tenant_id: effectiveTenantId } : {}),
-      },
-      limit: 100,
+    // Prefer FastAPI DB-backed threads so titles/labels persist
+    const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
+    const base = useProxy
+      ? "/api/backend"
+      : ((process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || ""));
+    const url = `${(base || "").replace(/\/$/, "")}/threads`;
+    const headers: Record<string, string> = { "accept": "application/json" };
+    headers["X-Tenant-ID"] = String(effectiveTenantId);
+    const resp = await fetch(url, { method: "GET", headers, credentials: "include" });
+    if (!resp.ok) {
+      return [];
+    }
+    const data = await resp.json().catch(() => ({ items: [] }));
+    const items = Array.isArray(data?.items) ? data.items : [];
+
+    // Map FastAPI rows → minimal LangGraph Thread objects expected by UI
+    const mapped: Thread[] = items.map((row: any) => {
+      const threadId = String(row?.id || "");
+      const label = (row?.label || row?.context_key || threadId || "").toString();
+      return {
+        thread_id: threadId,
+        created_at: row?.created_at || null,
+        updated_at: row?.last_updated_at || row?.created_at || null,
+        // Minimal values shape so ThreadList can render a title using first message content
+        values: {
+          messages: [
+            {
+              id: "t-" + threadId,
+              role: "assistant",
+              content: [{ type: "text", text: label }],
+            },
+          ],
+        },
+        // Include tenant id so scopeThreadsToTenant can filter correctly
+        metadata: { tenant_id: String(effectiveTenantId) },
+      } as unknown as Thread;
     });
 
-    const scopedThreads = scopeThreadsToTenant(threads, effectiveTenantId);
+    const scopedThreads = scopeThreadsToTenant(mapped, effectiveTenantId);
     setTenantThreads((prev) => writeTenantThreads(prev, effectiveTenantId, scopedThreads));
     return scopedThreads;
-  }, [apiUrl, assistantId, clientBase, effectiveTenantId]);
+  }, [effectiveTenantId]);
 
   const value = {
     getThreads,

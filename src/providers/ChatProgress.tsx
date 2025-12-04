@@ -175,7 +175,16 @@ export function ChatProgressProvider({ children }: { children: React.ReactNode }
         if (res.ok) {
           const body = await res.json().catch(() => null);
           if (body?.status_history) pushStatusHistory(body.status_history);
-        } else if (res.status !== 404) {
+        } else if (res.status === 404) {
+          // Thread missing/stale — surface a clear status event in the UI
+          pushStatusHistory([
+            {
+              phase: "expired_thread",
+              message: "Thread expired or missing. Start a new chat.",
+              timestamp: new Date().toISOString(),
+            },
+          ]);
+        } else {
           logEvent({
             level: "warn",
             message: "Orchestrator status poll failed",
