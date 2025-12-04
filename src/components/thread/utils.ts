@@ -13,3 +13,24 @@ export function getContentString(content: Message["content"]): string {
     .map((c) => c.text);
   return texts.join(" ");
 }
+
+/**
+ * Derive a human-friendly thread label from a summary text.
+ * - Prefer a domain found in the text (e.g., example.com)
+ * - Else use the leading 60 chars of the text
+ */
+export function deriveLabelFromSummary(text: string): string {
+  const t = (text || "").trim();
+  if (!t) return "ICP session";
+  try {
+    // naive domain finder: match host from URL or bare domain
+    const m = t.match(/https?:\/\/([^\s/)]+)|\b([a-z0-9-]+\.)+[a-z]{2,}\b/i);
+    if (m) {
+      const host = (m[1] || m[0]).replace(/^https?:\/\//i, "").replace(/[,.;:)]$/, "");
+      if (host) return host.toLowerCase();
+    }
+  } catch {
+    // ignore
+  }
+  return t.split(/\s+/).join(" ").slice(0, 60);
+}

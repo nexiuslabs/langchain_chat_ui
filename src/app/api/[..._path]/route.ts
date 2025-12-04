@@ -52,12 +52,21 @@ function getDispatcher(): any | undefined {
   } catch (_err) { return undefined; }
 }
 
-const LANGGRAPH_PREFIXES = new Set(["threads", "assistants", "deployments", "runs", "schemas", "assets"]);
+const LANGGRAPH_PREFIXES = new Set(["assistants", "deployments", "runs", "schemas", "assets"]);
 
-function resolveBaseUrl(firstSegment: string | undefined): string {
-  const langgraphBase = process.env.LANGGRAPH_API_URL;
-  const fastapiBase = process.env.FASTAPI_API_URL || process.env.NEXT_PUBLIC_API_URL || langgraphBase || "";
-  if (firstSegment && LANGGRAPH_PREFIXES.has(firstSegment.toLowerCase())) {
+function resolveBaseUrlForSegments(segments: string[]): string {
+  const langgraphBase = process.env.NEXT_PUBLIC_API_URL || process.env.LANGGRAPH_API_URL || "";
+  const fastapiBase = process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || langgraphBase || "";
+  const seg0 = (segments?.[0] || "").toLowerCase();
+  // Special-case: route thread runs/history to LangGraph; CRUD to FastAPI
+  if (seg0 === "threads") {
+    const seg2 = (segments?.[2] || "").toLowerCase();
+    const isRuns = seg2 === "runs" || seg2 === "runs/stream" || seg2.startsWith("runs");
+    const isHistory = seg2 === "history";
+    if (isRuns || isHistory) return langgraphBase || fastapiBase;
+    return fastapiBase;
+  }
+  if (seg0 && LANGGRAPH_PREFIXES.has(seg0)) {
     return langgraphBase || fastapiBase;
   }
   return fastapiBase;
@@ -67,7 +76,7 @@ async function targetUrl(req: Request, params: Promise<Params> | Params): Promis
   const { _path } = await params;
   const segments = _path || [];
   const path = segments.join("/");
-  const base = resolveBaseUrl(segments[0]);
+  const base = resolveBaseUrlForSegments(segments);
   const url = new URL(base);
   // Ensure trailing slash once
   const basePath = url.pathname.endsWith("/") ? url.pathname : url.pathname + "/";
@@ -89,6 +98,53 @@ function summarizeUrl(raw: string): string {
 
 async function forward(method: string, request: Request, params: Promise<Params> | Params) {
   await ensureUndiciConfigured();
+  const { _path } = await params;
+  let segments = _path || [];
+  // Guard against explicitly invalid thread IDs, but allow collection routes like GET /threads
+  try {
+    if ((segments?.[0] || "").toLowerCase() === "threads") {
+      const seg1 = (segments?.[1] || "").trim();
+      const seg2 = (segments?.[2] || "").trim().toLowerCase();
+      const isCollectionRoute = !seg1; // e.g., /threads
+      if (!isCollectionRoute && (seg1 === "undefined" || seg1 === "null")) {
+        return new Response("thread_id is required", { status: 422, headers: { "content-type": "text/plain; charset=utf-8" } });
+      }
+      // If a subresource explicitly requires an id but none is present
+      if (!seg1 && ["runs", "history"].includes(seg2)) {
+        return new Response("thread_id is required", { status: 422, headers: { "content-type": "text/plain; charset=utf-8" } });
+      }
+      // Resolve runtime thread id from backend mapping and rewrite segments[1]
+      if (seg1) {
+        try {
+          const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
+          const backendBase = useProxy ? "/api/backend" : (process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || "");
+          if (backendBase) {
+            const url = `${(backendBase || '').replace(/\/$/, '')}/threads/${encodeURIComponent(seg1)}/runtime`;
+            const r = await fetch(url, {
+              method: 'GET',
+              headers: {
+                'accept': 'application/json',
+                // Propagate tenant header if present
+                ...(request.headers.get('x-tenant-id') ? { 'x-tenant-id': String(request.headers.get('x-tenant-id')) } : {}),
+                ...(request.headers.get('authorization') ? { 'authorization': String(request.headers.get('authorization')) } : {}),
+                // Include cookies so backend sees the session
+                ...(request.headers.get('cookie') ? { 'cookie': String(request.headers.get('cookie')) } : {}),
+              },
+              credentials: 'include' as any,
+            });
+            if (r.ok) {
+              const data = await r.json().catch(() => ({}));
+              const rid = data?.runtime_thread_id;
+              if (typeof rid === 'string' && rid) {
+                segments = [segments[0], rid, ...segments.slice(2)];
+              }
+            }
+          }
+        } catch { /* ignore and forward as-is */ }
+      }
+    }
+  } catch (_e) { /* ignore */ }
+
   const url = await targetUrl(request, params);
   const logUrl = summarizeUrl(url);
   const started = Date.now();
@@ -211,6 +267,42 @@ async function forward(method: string, request: Request, params: Promise<Params>
       status: resp.status,
       duration_ms: Date.now() - started,
     });
+    // Auto-recover stale threads for LangGraph history/runs calls: create and retry once
+    try {
+      const first = (segments?.[0] || "").toLowerCase();
+      const seg2 = (segments?.[2] || "").toLowerCase();
+      const isRuns = first === "threads" && (seg2 === "runs" || seg2 === "runs/stream" || seg2.startsWith("runs"));
+      const isHistory = first === "threads" && seg2 === "history";
+      if ((isRuns || isHistory) && resp.status === 404) {
+        // Best-effort create: POST /threads (LangGraph base) with explicit thread_id
+        const langgraphBase = process.env.NEXT_PUBLIC_API_URL || process.env.LANGGRAPH_API_URL || "";
+        if (langgraphBase) {
+          const createUrl = new URL(langgraphBase);
+          const basePath = createUrl.pathname.endsWith("/") ? createUrl.pathname : createUrl.pathname + "/";
+          createUrl.pathname = basePath + "threads";
+          const tid = segments?.[1];
+          const headersCreate: Record<string, string> = { "content-type": "application/json" };
+          const apiKey = process.env.LANGSMITH_API_KEY;
+          if (apiKey) headersCreate["x-api-key"] = apiKey;
+          const tenant = request.headers.get("x-tenant-id");
+          if (tenant) headersCreate["x-tenant-id"] = tenant;
+          try {
+            // Many LangGraph servers accept `thread_id` for explicit IDs
+            const cr = await fetch(createUrl.toString(), { method: "POST", headers: headersCreate, body: JSON.stringify({ thread_id: tid }) });
+            if (cr.ok) {
+              // Retry original request once
+              const retry = await fetch(url, init);
+              const headersRetry = new Headers(retry.headers);
+              headersRetry.delete("content-length");
+              return new Response(retry.body, { status: retry.status, headers: headersRetry });
+            }
+          } catch (_er) { /* ignore */ }
+        }
+        // Friendly error if still missing
+        const msg = { error: "thread_missing", message: "Thread expired or missing. Start a new chat.", thread_id: segments?.[1] };
+        return new Response(JSON.stringify(msg), { status: 404, headers: { "content-type": "application/json" } });
+      }
+    } catch (_err) { /* ignore */ }
     // Stream response back, but drop conflicting CL header
     const headersOut = new Headers(resp.headers);
     headersOut.delete("content-length");

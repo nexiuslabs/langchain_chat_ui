@@ -125,18 +125,20 @@ const StreamSession = ({
     // If a threadId is present from URL/history but no longer exists on the server,
     // clear it so we can pre-create a fresh tenant-scoped thread below.
     (async () => {
-      if (!threadId) return;
+      if (!threadId || threadId === 'undefined' || threadId === 'null') return;
       try {
         const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
-        const base = useProxy ? "/api" : apiUrl;
-        const res = await fetch(`${base}/threads/${threadId}/history?limit=1`, {
+        const base = useProxy
+          ? "/api/backend"
+          : ((process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || apiUrl || ""));
+        const res = await fetch(`${(base || "").replace(/\/$/, "")}/threads/${threadId}`, {
           credentials: "include",
           headers: {
             ...(effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : {}),
             ...(process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_USE_AUTH_HEADER === 'true' && idToken ? { Authorization: `Bearer ${idToken}` } : {}),
           },
         });
-        if (res.status === 404) {
+        if (res.status === 404 || res.status === 401) {
           // Stale thread – drop it to avoid racing runs on a missing thread
           setThreadId(null);
         }
@@ -145,25 +147,7 @@ const StreamSession = ({
       }
     })();
 
-    // Patch existing thread metadata with tenant before any run
-    (async () => {
-      try {
-        if (!threadId) return;
-        if (!effectiveTenantId) return;
-        const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
-        const base = useProxy ? "/api" : apiUrl;
-        await fetch(`${base}/threads/${threadId}`, {
-          method: "PATCH",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-            ...(effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : {}),
-            ...(process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_USE_AUTH_HEADER === 'true' && idToken ? { Authorization: `Bearer ${idToken}` } : {}),
-          },
-          body: JSON.stringify({ metadata: { tenant_id: effectiveTenantId } }),
-        }).catch(() => {});
-      } catch (_e) { /* ignore */ }
-    })();
+    // No-op: do not PATCH thread metadata here; FastAPI PATCH expects a label
 
     if (precreatedRef.current) return;
     if (threadId) return; // already have a thread
@@ -171,39 +155,36 @@ const StreamSession = ({
     // Require tenant id to avoid cross-tenant ambiguity
     if (!effectiveTenantId) return;
     try {
-      const client = createClient(apiUrl, apiKey ?? undefined, {
-        ...(effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : {}),
-        ...(process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_USE_AUTH_HEADER === 'true' && idToken ? { Authorization: `Bearer ${idToken}` } : {}),
-      });
-      client.threads
-        .create({ metadata: { tenant_id: effectiveTenantId }, graphId: assistantId })
-        .then((t) => {
-          setThreadId(t.thread_id);
-          precreatedRef.current = true;
+      const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
+      const base = useProxy
+        ? "/api/backend"
+        : ((process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || ""));
+      const url = `${(base || "").replace(/\/$/, "")}/threads`;
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (effectiveTenantId) headers["X-Tenant-ID"] = effectiveTenantId;
+      if (process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_USE_AUTH_HEADER === 'true' && idToken) {
+        headers["Authorization"] = `Bearer ${idToken}`;
+      }
+      fetch(url, { method: 'POST', headers, credentials: 'include', body: JSON.stringify({}) })
+        .then(async (r) => {
+          if (!r.ok) return;
+          const data = await r.json().catch(() => ({}));
+          const id = data?.id || data?.thread_id;
+          if (id && typeof id === 'string') {
+            setThreadId(id);
+            precreatedRef.current = true;
+          }
         })
-        .catch((e) => { void e; });
-    } catch (e) { void e; }
+        .catch(() => {});
+    } catch (_e) { /* ignore */ }
   }, [assistantId, effectiveTenantId, apiUrl, apiKey, idToken, threadId, setThreadId]);
-  const streamValue = useTypedStream({
+  const internalStream = useTypedStream({
     apiUrl,
     apiKey: apiKey ?? undefined,
     assistantId,
-    threadId: threadId ?? null,
+    // Bind runs to DB thread id; proxies will auto-create missing runtime threads
+    threadId: (threadId && threadId !== 'undefined' && threadId !== 'null') ? threadId : undefined,
     streamMode: ["messages"],
-    // Some SDK versions accept `configurable` at top-level; include it to
-    // maximize compatibility in addition to `config.configurable` below.
-    configurable: (effectiveTenantId
-      ? { tenant_id: effectiveTenantId }
-      : undefined) as any,
-    // Provide run config so LangGraph nodes can resolve tenant via
-    // var_child_runnable_config and metadata/context.
-    config: {
-      configurable: {
-        tenant_id: effectiveTenantId ?? undefined,
-        metadata: effectiveTenantId ? { tenant_id: effectiveTenantId } : undefined,
-        context: effectiveTenantId ? { tenant_id: effectiveTenantId } : undefined,
-      },
-    } as any,
     defaultHeaders: {
       ...(effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : {}),
       ...(process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_USE_AUTH_HEADER === 'true' && idToken ? { Authorization: `Bearer ${idToken}` } : {}),
@@ -289,40 +270,9 @@ const StreamSession = ({
         }
       } catch (_err) { /* ignore */ }
     },
-    onThreadId: (id) => {
-      setThreadId(id);
-      // Optimistically add the new thread to history so the sidebar updates immediately
-      try {
-        setThreads((existing) => mergeThreadLists(existing, [{ thread_id: id } as any]));
-      } catch (e) { void e; }
-      // Ensure thread carries tenant metadata even if auto-created by the SDK
-      (async () => {
-        try {
-          if (!effectiveTenantId) return;
-          const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
-          const base = useProxy ? "/api" : apiUrl;
-          const res = await fetch(`${base}/threads/${id}`, {
-            method: "PATCH",
-            credentials: "include",
-            headers: {
-              "Content-Type": "application/json",
-              ...(effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : {}),
-              ...(process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_USE_AUTH_HEADER === 'true' && idToken ? { Authorization: `Bearer ${idToken}` } : {}),
-            },
-            body: JSON.stringify({ metadata: { tenant_id: effectiveTenantId } }),
-          });
-          // ignore non-2xx; it's a best-effort
-        } catch (e) { void e; }
-      })();
-      // Refetch threads list when thread ID changes.
-      // Wait for some seconds before fetching so we're able to get the new thread that was created.
-      sleep()
-        .then(() =>
-          getThreads().then((fetched) =>
-            setThreads((existing) => mergeThreadLists(existing, fetched)),
-          ),
-        )
-        .catch(console.error);
+    onThreadId: (_id) => {
+      // Ignore LangGraph in-memory thread ids; we keep DB thread id from FastAPI
+      // Sidebar updates via GET /threads, not SDK callbacks
     },
   });
 
@@ -368,6 +318,30 @@ const StreamSession = ({
       });
   }, [apiKey, apiUrl, effectiveTenantId, idToken]);
 
+  // Refresh sidebar when thread is created and after first AI message arrives
+  const refreshOnceRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!threadId) return;
+    getThreads().catch(() => undefined);
+  }, [threadId, getThreads]);
+  useEffect(() => {
+    if (!threadId) return;
+    try {
+      const msgs = (internalStream as any)?.messages || [];
+      const hasAI = Array.isArray(msgs) && msgs.some((m: any) => m?.type === 'ai');
+      if (hasAI && refreshOnceRef.current !== threadId) {
+        refreshOnceRef.current = threadId;
+        getThreads().catch(() => undefined);
+      }
+    } catch (_e) { /* ignore */ }
+  }, [internalStream, threadId, getThreads]);
+
+  // Expose DB thread id in context, but keep LG runs global (threadId=null for SDK)
+  const streamValue = React.useMemo(() => ({
+    ...internalStream,
+    threadId: threadId ?? null,
+  }), [internalStream, threadId]);
+
   return (
     <StreamContext.Provider value={streamValue}>
       {children}
@@ -377,7 +351,9 @@ const StreamSession = ({
 
 // Default values for the form
 const DEFAULT_API_URL = "http://localhost:2024";
-const DEFAULT_ASSISTANT_ID = "agent";
+// Align default assistant/graph id with the LangGraph dev server registration
+// (see langgraph logs: Registering graph with id 'orchestrator').
+const DEFAULT_ASSISTANT_ID = "orchestrator";
 
 export const StreamProvider: React.FC<{ children: ReactNode }> = ({
   children,

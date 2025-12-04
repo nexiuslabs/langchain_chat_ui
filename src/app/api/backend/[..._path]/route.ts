@@ -58,7 +58,7 @@ function getDispatcher(): any | undefined {
 
 type Params = { _path: string[] };
 
-const LANGGRAPH_PREFIXES = new Set(["threads", "assistants", "deployments", "runs", "schemas", "assets"]);
+const LANGGRAPH_PREFIXES = new Set(["assistants", "deployments", "runs", "schemas", "assets"]);
 
 async function segmentsFromContext(ctx: any): Promise<string[]> {
   try {
@@ -75,9 +75,18 @@ async function segmentsFromContext(ctx: any): Promise<string[]> {
 }
 
 function resolveBackendBase(firstSegment: string | undefined): string {
-  const langgraphBase = process.env.LANGGRAPH_API_URL;
-  const fastapiBase = process.env.FASTAPI_API_URL || process.env.NEXT_PUBLIC_API_URL || langgraphBase || "";
-  if (firstSegment && LANGGRAPH_PREFIXES.has(firstSegment.toLowerCase())) {
+  // Use existing env names from .env.local
+  // LangGraph dev or proxy base (e.g., http://localhost:8001)
+  const langgraphBase = process.env.NEXT_PUBLIC_API_URL || process.env.LANGGRAPH_API_URL || "";
+  // FastAPI base (e.g., http://localhost:8000)
+  const fastapiBase = process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || langgraphBase || "";
+  const seg = (firstSegment || "").toLowerCase();
+  // Route threads to FastAPI so DB-backed thread creation/resume hits our API
+  if (seg === "threads") {
+    return fastapiBase;
+  }
+  // Route runs/stream and other LangGraph server endpoints to LANGGRAPH_API_URL when set
+  if (seg && LANGGRAPH_PREFIXES.has(seg)) {
     return langgraphBase || fastapiBase;
   }
   return fastapiBase;
@@ -104,6 +113,22 @@ function summarizeUrl(raw: string): string {
 
 async function forward(method: string, request: Request, segments: string[]) {
   await ensureUndiciConfigured();
+  // Guard against explicitly invalid thread IDs, but allow collection routes like GET /threads
+  try {
+    if ((segments?.[0] || "").toLowerCase() === "threads") {
+      const seg1 = (segments?.[1] || "").trim();
+      const seg2 = (segments?.[2] || "").trim().toLowerCase();
+      const isCollectionRoute = !seg1; // e.g., /threads
+      const requiresId = !!seg1 || ["runs", "history"].includes(seg2);
+      if (!isCollectionRoute && (seg1 === "undefined" || seg1 === "null")) {
+        return new Response("thread_id is required", { status: 422, headers: { "content-type": "text/plain; charset=utf-8" } });
+      }
+      // If a subresource explicitly requires an id but none is present
+      if (!seg1 && ["runs", "history"].includes(seg2)) {
+        return new Response("thread_id is required", { status: 422, headers: { "content-type": "text/plain; charset=utf-8" } });
+      }
+    }
+  } catch (_e) { /* ignore */ }
   const url = targetUrlFromSegments(request, segments);
   const logUrl = summarizeUrl(url);
   const started = Date.now();
@@ -217,6 +242,16 @@ async function forward(method: string, request: Request, segments: string[]) {
       status: resp.status,
       duration_ms: Date.now() - started,
     });
+    // Friendly error surface for stale thread on run stream
+    try {
+      const first = (segments?.[0] || "").toLowerCase();
+      const seg2 = (segments?.[2] || "").toLowerCase();
+      const isRuns = first === "threads" && (seg2 === "runs" || seg2 === "runs/stream" || seg2.startsWith("runs"));
+      if (isRuns && resp.status === 404) {
+        const msg = { error: "thread_missing", message: "Thread expired or missing. Start a new chat.", thread_id: segments?.[1] };
+        return new Response(JSON.stringify(msg), { status: 404, headers: { "content-type": "application/json" } });
+      }
+    } catch (_err) { /* ignore */ }
     const headersOut = new Headers(resp.headers);
     headersOut.delete("content-length");
     return new Response(resp.body, { status: resp.status, headers: headersOut });
