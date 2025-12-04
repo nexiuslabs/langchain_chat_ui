@@ -58,7 +58,7 @@ function getDispatcher(): any | undefined {
 
 type Params = { _path: string[] };
 
-const LANGGRAPH_PREFIXES = new Set(["threads", "assistants", "deployments", "runs", "schemas", "assets"]);
+const LANGGRAPH_PREFIXES = new Set(["assistants", "deployments", "runs", "schemas", "assets"]);
 
 async function segmentsFromContext(ctx: any): Promise<string[]> {
   try {
@@ -75,9 +75,18 @@ async function segmentsFromContext(ctx: any): Promise<string[]> {
 }
 
 function resolveBackendBase(firstSegment: string | undefined): string {
-  const langgraphBase = process.env.LANGGRAPH_API_URL;
-  const fastapiBase = process.env.FASTAPI_API_URL || process.env.NEXT_PUBLIC_API_URL || langgraphBase || "";
-  if (firstSegment && LANGGRAPH_PREFIXES.has(firstSegment.toLowerCase())) {
+  // Use existing env names from .env.local
+  // LangGraph dev or proxy base (e.g., http://localhost:8001)
+  const langgraphBase = process.env.NEXT_PUBLIC_API_URL || process.env.LANGGRAPH_API_URL || "";
+  // FastAPI base (e.g., http://localhost:8000)
+  const fastapiBase = process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || langgraphBase || "";
+  const seg = (firstSegment || "").toLowerCase();
+  // Route threads to FastAPI so DB-backed thread creation/resume hits our API
+  if (seg === "threads") {
+    return fastapiBase;
+  }
+  // Route runs/stream and other LangGraph server endpoints to LANGGRAPH_API_URL when set
+  if (seg && LANGGRAPH_PREFIXES.has(seg)) {
     return langgraphBase || fastapiBase;
   }
   return fastapiBase;

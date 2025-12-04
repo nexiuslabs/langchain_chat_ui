@@ -15,7 +15,7 @@ import { useSession } from "next-auth/react";
 import { Button } from "../ui/button";
 import { Checkpoint, Message } from "@langchain/langgraph-sdk";
 import { AssistantMessage, AssistantMessageLoading } from "./messages/ai";
-import { getContentString } from "./utils";
+import { getContentString, deriveLabelFromSummary } from "./utils";
 // (dedupe/ordering is handled inline; no external merge util is used)
 import { HumanMessage } from "./messages/human";
 import {
@@ -176,6 +176,7 @@ export function Thread() {
   const assistantIdFromStream: string | undefined = (stream as any)?.assistantId;
 
   const lastError = useRef<string | undefined>(undefined);
+  const renamedRef = useRef<Record<string, boolean>>({});
 
   const setThreadId = useCallback(
     (id: string | null) => {
@@ -273,6 +274,33 @@ export function Thread() {
     prevMessageLength.current = liveMessages.length;
   }, [liveMessages]);
 
+  // After the first assistant summary for a thread, PATCH a human label
+  useEffect(() => {
+    if (!threadId || !messages?.length) return;
+    if (renamedRef.current[threadId]) return;
+    const firstAI = messages.find((m) => m.type === "ai");
+    if (!firstAI) return;
+    const summary = getContentString((firstAI as Message).content ?? []);
+    if (!summary || summary.trim().length < 8) return;
+    const label = deriveLabelFromSummary(summary);
+    if (!label || !label.trim()) return;
+    const useProxy = (process.env.NEXT_PUBLIC_USE_API_PROXY || "").toLowerCase() === "true";
+    const base = useProxy ? "/api/backend" : (process.env.NEXT_PUBLIC_API_URL || "");
+    const url = `${base}/threads/${threadId}`;
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (tenantId) headers["X-Tenant-ID"] = String(tenantId);
+    fetch(url, {
+      method: "PATCH",
+      headers,
+      credentials: "include",
+      body: JSON.stringify({ label }),
+    })
+      .then((r) => {
+        if (r.ok) renamedRef.current[threadId] = true;
+      })
+      .catch(() => undefined);
+  }, [threadId, messages, tenantId]);
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if ((input.trim().length === 0 && contentBlocks.length === 0) || isLoading)
@@ -318,8 +346,6 @@ export function Thread() {
       { input: serializedInput, messages: newHumanMessage, context },
       {
         streamMode: ["messages"],
-        // Ensure tenant accompanies this run even if proxy injection fails
-        config: { configurable: { tenant_id: tenantId } } as any,
         optimisticValues: (prev) => ({
           ...prev,
           context,

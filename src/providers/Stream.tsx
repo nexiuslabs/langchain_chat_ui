@@ -190,20 +190,6 @@ const StreamSession = ({
     assistantId,
     threadId: threadId ?? null,
     streamMode: ["messages"],
-    // Some SDK versions accept `configurable` at top-level; include it to
-    // maximize compatibility in addition to `config.configurable` below.
-    configurable: (effectiveTenantId
-      ? { tenant_id: effectiveTenantId }
-      : undefined) as any,
-    // Provide run config so LangGraph nodes can resolve tenant via
-    // var_child_runnable_config and metadata/context.
-    config: {
-      configurable: {
-        tenant_id: effectiveTenantId ?? undefined,
-        metadata: effectiveTenantId ? { tenant_id: effectiveTenantId } : undefined,
-        context: effectiveTenantId ? { tenant_id: effectiveTenantId } : undefined,
-      },
-    } as any,
     defaultHeaders: {
       ...(effectiveTenantId ? { "X-Tenant-ID": effectiveTenantId } : {}),
       ...(process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_USE_AUTH_HEADER === 'true' && idToken ? { Authorization: `Bearer ${idToken}` } : {}),

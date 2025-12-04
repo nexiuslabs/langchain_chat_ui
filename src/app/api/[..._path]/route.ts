@@ -52,12 +52,18 @@ function getDispatcher(): any | undefined {
   } catch (_err) { return undefined; }
 }
 
-const LANGGRAPH_PREFIXES = new Set(["threads", "assistants", "deployments", "runs", "schemas", "assets"]);
+const LANGGRAPH_PREFIXES = new Set(["assistants", "deployments", "runs", "schemas", "assets"]);
 
 function resolveBaseUrl(firstSegment: string | undefined): string {
-  const langgraphBase = process.env.LANGGRAPH_API_URL;
-  const fastapiBase = process.env.FASTAPI_API_URL || process.env.NEXT_PUBLIC_API_URL || langgraphBase || "";
-  if (firstSegment && LANGGRAPH_PREFIXES.has(firstSegment.toLowerCase())) {
+  // Use existing env names in .env.local
+  const langgraphBase = process.env.NEXT_PUBLIC_API_URL || process.env.LANGGRAPH_API_URL || "";
+  const fastapiBase = process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || langgraphBase || "";
+  const seg = (firstSegment || "").toLowerCase();
+  // Route thread CRUD to FastAPI so DB-backed titles and labels persist
+  if (seg === "threads") {
+    return fastapiBase;
+  }
+  if (seg && LANGGRAPH_PREFIXES.has(seg)) {
     return langgraphBase || fastapiBase;
   }
   return fastapiBase;
