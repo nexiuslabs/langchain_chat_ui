@@ -242,6 +242,37 @@ async function forward(method: string, request: Request, segments: string[]) {
       status: resp.status,
       duration_ms: Date.now() - started,
     });
+    // Extra diagnostics for auth endpoints: log presence of Set-Cookie
+    try {
+      const first = (segments?.[0] || "").toLowerCase();
+      const second = (segments?.[1] || "").toLowerCase();
+      const isAuthEndpoint = first === "auth" && ["login", "exchange", "refresh"].includes(second);
+      if (isAuthEndpoint) {
+        let setCookieCount = 0;
+        let hasSetCookie = false;
+        const hdrs: any = resp.headers as any;
+        try {
+          if (typeof hdrs.getSetCookie === 'function') {
+            const arr = hdrs.getSetCookie();
+            setCookieCount = Array.isArray(arr) ? arr.length : 0;
+            hasSetCookie = setCookieCount > 0;
+          } else {
+            const v = hdrs.get && hdrs.get('set-cookie');
+            hasSetCookie = !!v;
+            setCookieCount = v ? 1 : 0;
+          }
+        } catch { /* ignore */ }
+        logProxyActivity({
+          scope: "backend",
+          phase: "response",
+          method,
+          url: logUrl,
+          status: resp.status,
+          duration_ms: Date.now() - started,
+          data: { endpoint: `${first}/${second}`, has_set_cookie: hasSetCookie, set_cookie_count: setCookieCount },
+        });
+      }
+    } catch { /* ignore */ }
     // Friendly error surface for stale thread on run stream
     try {
       const first = (segments?.[0] || "").toLowerCase();

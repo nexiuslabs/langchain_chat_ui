@@ -13,6 +13,7 @@ export type ProxyLogEvent = {
   duration_ms?: number;
   message?: string;
   error_code?: string;
+  data?: Record<string, unknown>;
 };
 
 const dirEnv = process.env.TROUBLESHOOT_FE_LOG_DIR || ".log";

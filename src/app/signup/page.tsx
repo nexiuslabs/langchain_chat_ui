@@ -32,10 +32,18 @@ export default function SignupPage() {
           password,
           first_name: firstName || undefined,
           last_name: lastName || undefined,
-          email_verified: true,
         }),
       });
       if (res.ok) {
+        // If the server enforces email verification, it will return a marker
+        const body = await res.json().catch(() => ({} as any));
+        if (body?.requires_verification) {
+          // Show guidance and send the user to login page
+          alert("We sent a verification email. Please verify your email, then sign in.");
+          window.location.href = "/login";
+          return;
+        }
+        // Dev/local fallback: auto-login path
         window.location.href = "/";
         return;
       }
