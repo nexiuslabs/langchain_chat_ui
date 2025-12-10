@@ -1,6 +1,5 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import { Issuer } from "openid-client";
 
 function decodeJwtNoVerify(token: string): any | null {
   try {
@@ -20,33 +19,26 @@ async function buildProviders() {
   const cid = process.env.NEXIUS_CLIENT_ID;
   const secret = process.env.NEXIUS_CLIENT_SECRET;
   if (issuerUrl && cid && secret) {
-    try {
-      const discovered = await Issuer.discover(issuerUrl);
-      providers.push({
-        id: "nexius",
-        name: "Nexius",
-        type: "oauth",
-        version: "2.0",
-        idToken: true,
-        checks: ["pkce", "state"],
-        authorization: { params: { scope: "openid profile email" } },
-        clientId: cid,
-        clientSecret: secret,
-        issuer: discovered.issuer,
-        wellKnown: `${discovered.issuer}/.well-known/openid-configuration`,
-        profile(profile: any) {
-          // Preserve common custom claims so downstream can read tenant/roles
-          const tenant_id = (profile as any)?.tenant_id ?? (profile as any)?.["https://claims/tenant_id"]; 
-          const roles = (profile as any)?.roles ?? (profile as any)?.["https://claims/roles"]; 
-          return { id: profile.sub, email: profile.email, tenant_id, roles } as any;
-        },
-      });
-    } catch (e) {
-      console.warn(
-        "Nexius OIDC discovery failed; falling back to dev credentials login.",
-        e
-      );
-    }
+    // Configure provider directly from env to avoid discovery-time timeouts
+    providers.push({
+      id: "nexius",
+      name: "Nexius",
+      type: "oauth",
+      version: "2.0",
+      idToken: true,
+      checks: ["pkce", "state"],
+      authorization: { params: { scope: "openid profile email" } },
+      clientId: cid,
+      clientSecret: secret,
+      issuer: issuerUrl,
+      wellKnown: `${issuerUrl.replace(/\/$/, "")}/.well-known/openid-configuration`,
+      profile(profile: any) {
+        // Preserve common custom claims so downstream can read tenant/roles
+        const tenant_id = (profile as any)?.tenant_id ?? (profile as any)?.["https://claims/tenant_id"]; 
+        const roles = (profile as any)?.roles ?? (profile as any)?.["https://claims/roles"]; 
+        return { id: profile.sub, email: profile.email, tenant_id, roles } as any;
+      },
+    });
   }
   if (providers.length === 0) {
     // Dev-only fallback to unblock local development when SSO env is not set

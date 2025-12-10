@@ -22,6 +22,41 @@ export default function LoginPage() {
     e.preventDefault();
     setError(null);
     setLoading(true);
+    function formatErrorMessage(detail: any, status: number): string {
+      const fallback = status === 401 ? "Invalid email or password." : status === 403 ? "Access denied." : "Login failed.";
+      try {
+        // If backend sent an object, prefer known fields
+        if (detail && typeof detail === "object") {
+          const m = (detail.error_description || detail.errorMessage || detail.message || detail.error || detail.detail);
+          if (typeof m === "string" && m.trim()) return m;
+        }
+        // If backend sent a string, extract any JSON payload and prefer description
+        if (typeof detail === "string" && detail) {
+          const str = detail;
+          // Friendly rewrites
+          if (/not verified/i.test(str)) return "Please verify your email, then sign in.";
+          if (/invalid credentials/i.test(str) && /not fully set up|setup/i.test(str)) return "Account is not fully set up. Please complete verification.";
+          if (/SSO unavailable/i.test(str)) return "Sign-in service is temporarily unavailable. Please try again soon.";
+          // Try to parse an inline JSON object within the string
+          const start = str.indexOf("{");
+          const end = str.lastIndexOf("}");
+          if (start !== -1 && end !== -1 && end > start) {
+            try {
+              const jsonText = str.slice(start, end + 1);
+              const obj = JSON.parse(jsonText);
+              const msg = obj.error_description || obj.errorMessage || obj.message || obj.detail;
+              if (typeof msg === "string" && msg.trim()) return msg;
+            } catch { /* ignore parse errors */ }
+          }
+          // Strip any trailing JSON-looking payload to avoid raw JSON in UI
+          if (str.includes("{")) {
+            return str.slice(0, str.indexOf("{")) .trim().replace(/[ :\-]+$/, "") || fallback;
+          }
+          return str;
+        }
+      } catch { /* fall through to fallback */ }
+      return fallback;
+    }
     try {
       const res = await fetch(`${apiBase}/auth/login`, {
         method: "POST",
@@ -39,10 +74,11 @@ export default function LoginPage() {
         return;
       }
       const body = await res.json().catch(() => ({} as any));
-      setError(body?.detail || "Login failed");
+      const detail = (body?.detail ?? body);
+      setError(formatErrorMessage(detail, res.status));
       (emailRef.current ?? undefined)?.focus();
     } catch (err: any) {
-      setError(String(err));
+      setError("Could not reach the server. Please try again.");
     } finally { setLoading(false); }
   }
 
